@@ -121,12 +121,14 @@ export class WorkbenchTerminalSession {
     }
     const display = this.filter(normalized)
     if (display.length > 0) {
-      this.displayBuf += display
+      // Ensure every newline sent to interactive terminal has carriage return (\r\n) to prevent staircase effect
+      const termDisplay = display.replace(/(?<!\r)\n/g, '\r\n')
+      this.displayBuf += termDisplay
       if (encoder.encode(this.displayBuf).byteLength > this.options.maxScrollbackBytes) {
         const cut = this.displayBuf.indexOf('\n', Math.floor(this.displayBuf.length / 2))
         if (cut > 0) this.displayBuf = this.displayBuf.slice(cut + 1)
       }
-      for (const subscriber of this.outputSubscribers) subscriber(display)
+      for (const subscriber of this.outputSubscribers) subscriber(termDisplay)
     }
     for (const listener of this.dataListeners) listener()
   }
