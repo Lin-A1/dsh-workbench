@@ -22,21 +22,23 @@ export const inject = ['slots', 'layout']
  * from here — keyed on body classes and one CSS variable written by
  * client/column.ts — never by touching harness nodes.
  *
- * Visual language: a calm floating card on the app background — quiet grays,
- * hairline separators, generous row spacing; color is reserved for state
- * (green ok dot, amber reconnect) and data (+adds / −dels), never decoration.
+ * Palette discipline: the harness paints neutral blacks (body #151517,
+ * sidebar #1b1b1c, near-white text). Every workbench tone stays on that
+ * neutral axis — no blue-cast grays — so the card reads as the same app.
+ * Color is reserved for state (green ok dot, amber reconnect) and data.
  * ------------------------------------------------------------------------- */
 const WORKBENCH_SIDEBAR_CSS = `${xtermCss}
 :root {
-  --wb-card: #171b23;                    /* floating card surface       */
-  --wb-inset: #10141a;                   /* terminal / input wells      */
+  --wb-page: #151517;                    /* the app's own black          */
+  --wb-card: #1b1b1e;                    /* floating card surface        */
+  --wb-inset: #131316;                   /* terminal / input wells       */
   --wb-hover: rgba(255, 255, 255, 0.05);
   --wb-active: rgba(255, 255, 255, 0.08);
   --wb-line: rgba(255, 255, 255, 0.06);  /* hairline separators         */
   --wb-line-strong: rgba(255, 255, 255, 0.11);
-  --wb-text-1: #dee4ee;
-  --wb-text-2: #97a1b0;
-  --wb-text-3: #66707f;
+  --wb-text-1: #e9eaec;
+  --wb-text-2: #9b9ba1;
+  --wb-text-3: #6b6b72;
   --wb-green: #46c98c;
   --wb-amber: #d9a94e;
   --wb-red: #ef6f61;
@@ -73,7 +75,7 @@ body.wb-sidebar-opened [data-side='details'] {
   position: relative;
   padding: 10px 12px 10px 8px;
   box-sizing: border-box;
-  background: var(--dsw-alias-bg-base, #101319);
+  background: var(--wb-page);
   color: var(--wb-text-2);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
   font-size: 12px;
@@ -159,13 +161,13 @@ body.wb-sidebar-opened .wb-sidebar-root {
 }
 .wb-resize-handle:hover::before,
 body.wb-resizing .wb-resize-handle::before {
-  background: rgba(122, 162, 255, 0.55);
+  background: rgba(255, 255, 255, 0.35);
 }
 .wb-resize-handle:hover::after,
 body.wb-resizing .wb-resize-handle::after {
   opacity: 1;
-  background: rgba(122, 162, 255, 0.25);
-  border-color: rgba(122, 162, 255, 0.35);
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 body.wb-resizing { cursor: col-resize; user-select: none; }
 
@@ -509,8 +511,8 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   min-width: 0;
 }
 .wb-browser-omnibox:focus-within {
-  border-color: rgba(122, 162, 255, 0.45);
-  box-shadow: 0 0 0 3px rgba(122, 162, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
 }
 .wb-omnibox-icon { color: var(--wb-text-3); flex: none; display: inline-flex; }
 .wb-omnibox-input {
@@ -530,7 +532,7 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   height: 2px;
   flex: none;
   overflow: hidden;
-  background: rgba(122, 162, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
 }
 .wb-browser-progress::after {
   content: '';
@@ -538,7 +540,7 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   top: 0;
   bottom: 0;
   width: 40%;
-  background: linear-gradient(90deg, transparent, rgba(122, 162, 255, 0.9), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
   animation: wb-progress-slide 1.1s ease-in-out infinite;
 }
 @keyframes wb-progress-slide {
@@ -550,13 +552,13 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   flex: 1;
   min-height: 0;
   position: relative;
-  background: #0e1116;
+  background: var(--wb-inset);
 }
 .wb-browser-iframe {
   width: 100%;
   height: 100%;
   border: none;
-  background: #0e1116;
+  background: var(--wb-inset);
   display: block;
 }
 
@@ -673,7 +675,7 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   z-index: 1;
 }
 .wb-activity-item.src-human::after { border-color: var(--wb-green); }
-.wb-activity-item.src-model::after { border-color: #7a9ae8; }
+.wb-activity-item.src-model::after { border-color: #8b8b92; }
 
 .wb-activity-meta {
   display: flex;
