@@ -127,8 +127,8 @@ body.wb-sidebar-opened .wb-sidebar-root {
 .wb-resize-handle {
   position: absolute;
   top: 0;
-  left: -12px;
-  width: 12px;
+  left: -13px;
+  width: 14px;
   height: 100%;
   cursor: col-resize;
   z-index: 60;
@@ -140,25 +140,29 @@ body.wb-sidebar-opened .wb-sidebar-root {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 5px;
+  left: 6px;
   width: 2px;
   background: transparent;
   transition: background 0.15s ease;
 }
+/* Grip pill: visible whenever the workbench is in use — the affordance that
+   says "drag me" — brightening on direct hover and while dragging. */
 .wb-resize-handle::after {
   content: '';
   position: absolute;
   top: 50%;
-  left: 3px;
+  left: 4px;
   width: 6px;
-  height: 42px;
+  height: 44px;
   transform: translateY(-50%);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
+.wb-sidebar-root:hover .wb-resize-handle::after { opacity: 0.45; }
+.wb-sidebar-root:hover .wb-resize-handle::before { background: rgba(255, 255, 255, 0.09); }
 .wb-resize-handle:hover::before,
 body.wb-resizing .wb-resize-handle::before {
   background: rgba(255, 255, 255, 0.35);
@@ -166,8 +170,8 @@ body.wb-resizing .wb-resize-handle::before {
 .wb-resize-handle:hover::after,
 body.wb-resizing .wb-resize-handle::after {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 body.wb-resizing { cursor: col-resize; user-select: none; }
 
