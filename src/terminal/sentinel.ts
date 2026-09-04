@@ -36,29 +36,61 @@ export function stripMarkerLines(text: string, token: string): string {
     .replace(/\n+$/, '')
 }
 
+/**
+ * Filter sentinel marks out of the interactive display stream.
+ * CRITICAL FOR INTERACTIVE TYPING:
+ * Normal keystrokes, letters, spaces, and control sequences must be emitted
+ * IMMEDIATELY (zero buffering delay). We only hold back partial matches
+ * when the buffer ends with a potential prefix of SENTINEL_MARK.
+ */
 export function createSentinelLineFilter(): (chunk: string) => string {
   let pending = ''
   return (chunk) => {
     pending += chunk
+
+    // Fast-path: if pending contains no sentinel mark at all
+    const sentinelIdx = pending.indexOf(SENTINEL_MARK)
+    if (sentinelIdx < 0) {
+      // Check if the tail ends with a partial prefix of SENTINEL_MARK (e.g. "_", "__", "__D")
+      let safeEnd = pending.length
+      const maxPrefix = Math.min(pending.length, SENTINEL_MARK.length - 1)
+      for (let len = maxPrefix; len >= 1; len--) {
+        if (SENTINEL_MARK.startsWith(pending.slice(pending.length - len))) {
+          safeEnd = pending.length - len
+          break
+        }
+      }
+      const out = pending.slice(0, safeEnd)
+      pending = pending.slice(safeEnd)
+      return out
+    }
+
+    // Slow-path: pending has a sentinel mark. Strip complete lines containing the sentinel.
     let out = ''
     for (;;) {
       const nl = pending.indexOf('\n')
       if (nl < 0) break
-      const line = pending.slice(0, nl)
+      const lineWithNl = pending.slice(0, nl + 1)
       pending = pending.slice(nl + 1)
-      if (!line.includes(SENTINEL_MARK)) out += `${line}\n`
+      if (!lineWithNl.includes(SENTINEL_MARK)) {
+        out += lineWithNl
+      }
     }
-    for (;;) {
-      const cr = pending.indexOf('\r')
-      if (cr < 0) break
-      const segment = pending.slice(0, cr)
-      pending = pending.slice(cr + 1)
-      if (!segment.includes(SENTINEL_MARK)) out += `${segment}\r`
+
+    // After stripping sentinel lines, flush any safe trailing text
+    if (!pending.includes(SENTINEL_MARK)) {
+      let safeEnd = pending.length
+      const maxPrefix = Math.min(pending.length, SENTINEL_MARK.length - 1)
+      for (let len = maxPrefix; len >= 1; len--) {
+        if (SENTINEL_MARK.startsWith(pending.slice(pending.length - len))) {
+          safeEnd = pending.length - len
+          break
+        }
+      }
+      out += pending.slice(0, safeEnd)
+      pending = pending.slice(safeEnd)
     }
-    if (pending.length > 65536) {
-      out += pending
-      pending = ''
-    }
+
     return out
   }
 }

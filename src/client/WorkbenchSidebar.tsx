@@ -188,8 +188,8 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
 
   return (
     <div className="wb-sidebar-root">
-      {/* 分屏宽度拖拽手柄（双击恢复 48vw 默认半屏） */}
-      <div className="wb-resize-handle" ref={resizeHandleRef} title="拖拽调整分栏宽度 · 双击复位" />
+      {/* 分屏宽度拖拽手柄（宽感应带，双击恢复 48vw 默认半屏） */}
+      <div className="wb-resize-handle" ref={resizeHandleRef} title="拖拽调整分屏宽度 · 双击复位 48%" />
 
       <div className="wb-panel-card">
       {/* 统一的一级标签栏：品牌区 + 终端 / 网页 / Git / 动态 平级铺开 */}
