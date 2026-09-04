@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
+    "node-pty": "^1.1.0",
     "ssh2": "^1.17.0",
     "ws": "^8.18.0"
   },

@@ -66,9 +66,82 @@ function resolveShellCommand(): { file: string; args: string[] } {
   return { file: existsSync(defaultShell) ? defaultShell : '/bin/sh', args: ['-i'] }
 }
 
+/**
+ * node-pty is optional at runtime: when present, shells run on a real
+ * ConPTY pseudoconsole (native echo, ^C signals, readline line editing);
+ * otherwise we fall back to pipe stdio with a session-side keystroke
+ * mirror. Probed once per process.
+ */
+type PtyModule = typeof import('node-pty')
+let ptyProbe: PtyModule | null | undefined
+
+async function loadPty(): Promise<PtyModule | undefined> {
+  if (ptyProbe !== undefined) return ptyProbe ?? undefined
+  try {
+    ptyProbe = (await import('node-pty')) as PtyModule
+  }
+  catch {
+    ptyProbe = null
+  }
+  return ptyProbe ?? undefined
+}
+
 export async function connectLocal(req: LocalShellRequest): Promise<TerminalConnection> {
   const { file, args } = resolveShellCommand()
   const cwd = req.cwd && existsSync(req.cwd) ? req.cwd : process.cwd()
+
+  const pty = await loadPty()
+  if (pty !== undefined) {
+    return {
+      openShell: () => new Promise<ShellChannel>((resolve, reject) => {
+        try {
+          const p = pty.spawn(file, args, {
+            name: 'xterm-256color',
+            cols: req.cols,
+            rows: req.rows,
+            cwd,
+            env: {
+              ...process.env,
+              ...req.env,
+              LANG: 'zh_CN.UTF-8',
+              LC_ALL: 'zh_CN.UTF-8',
+              PYTHONIOENCODING: 'utf-8',
+              PYTHONUTF8: '1',
+              TERM: 'xterm-256color',
+            } as Record<string, string>,
+          })
+          const listeners: ((chunk: string) => void)[] = []
+          const closeListeners: (() => void)[] = []
+          p.onData((text) => {
+            for (const l of listeners) l(text)
+          })
+          p.onExit(() => {
+            for (const l of closeListeners) l()
+          })
+          resolve({
+            write: (data) => {
+              try { p.write(data) } catch { /* dead pty */ }
+            },
+            close: () => {
+              try { p.kill() } catch { /* ignore */ }
+            },
+            onData: (listener) => { listeners.push(listener) },
+            onClose: (listener) => { closeListeners.push(listener) },
+            resize: (rows, cols) => {
+              try { p.resize(cols, rows) } catch { /* ignore */ }
+            },
+            // The ConPTY line discipline echoes input and raises ^C signals.
+            echoesInput: true,
+          })
+        }
+        catch (err) {
+          reject(err)
+        }
+      }),
+      close: () => {},
+    }
+  }
+
   let proc: ChildProcessWithoutNullStreams | undefined
 
   return {
@@ -160,6 +233,10 @@ export async function connectLocal(req: LocalShellRequest): Promise<TerminalConn
         },
         onData: (listener) => { listeners.push(listener) },
         onClose: (listener) => { closeListeners.push(listener) },
+        // Pipe stdin has no TTY line discipline: bash/sh never echo keystrokes
+        // (PowerShell still echoes via its own reader). The session mirrors
+        // human input into the display when this is false.
+        echoesInput: !isBashish,
       })
     }),
     close: () => {

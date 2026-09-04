@@ -25,6 +25,13 @@ export interface ShellChannel {
   onData(listener: (chunk: string) => void): void
   onClose(listener: () => void): void
   resize?(rows: number, cols: number): void
+  /**
+   * Whether the shell echoes typed input back on its output (a real TTY or
+   * PSReadLine does this; a pipe-spawned bash has no line discipline and does
+   * not). Default true — the session mirrors human keystrokes into the
+   * display stream only when this is explicitly false.
+   */
+  echoesInput?: boolean
 }
 
 /** Established connection handle. */

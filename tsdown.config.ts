@@ -34,6 +34,8 @@ const nodeConfig: UserConfig = {
   sourcemap: false,
   fixedExtension: false,
   clean: true,
+  // Native addon — must stay a runtime require, never inlined.
+  external: ['node-pty'],
 }
 
 const clientConfig: UserConfig = {

@@ -214,7 +214,25 @@ export class WorkbenchTerminalSession {
       throw new Error(`terminal ${this.id} is closed`)
     }
     this.shell.write(data)
+    // A pipe-spawned shell has no TTY line discipline to echo keystrokes
+    // back; mirror them into the display stream so the human sees what they
+    // type. Only the display is fed — the AI-facing command buffer must not
+    // receive synthetic text.
+    if (this.shell.echoesInput === false && data.length > 0) {
+      this.writeDisplay(mirrorKeystrokes(data))
+    }
     this.noteInput('human', data)
+  }
+
+  /** Append to the human-facing display only (no AI buffer, no dataListeners). */
+  private writeDisplay(text: string): void {
+    const termDisplay = text.replace(/(?<!\r)\n/g, '\r\n')
+    this.displayBuf += termDisplay
+    if (encoder.encode(this.displayBuf).byteLength > this.options.maxScrollbackBytes) {
+      const cut = this.displayBuf.indexOf('\n', Math.floor(this.displayBuf.length / 2))
+      if (cut > 0) this.displayBuf = this.displayBuf.slice(cut + 1)
+    }
+    for (const subscriber of this.outputSubscribers) subscriber(termDisplay)
   }
 
   private noteInput(source: ActivitySource, text: string): void {
@@ -398,4 +416,19 @@ export class WorkbenchTerminalSession {
 function ellipsize(text: string): string {
   const normalized = text.replace(/\r/g, '')
   return normalized.length <= ACTIVITY_TEXT_LIMIT ? normalized : `${normalized.slice(0, ACTIVITY_TEXT_LIMIT)}…`
+}
+
+/**
+ * Render human keystrokes the way a TTY line discipline would: printable
+ * characters pass through, Enter breaks the line, backspace erases, control
+ * chords show as ^-notation, and navigation escape sequences stay invisible.
+ */
+function mirrorKeystrokes(data: string): string {
+  return data
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[a-zA-Z0-9=><]/g, '')
+    .replace(/\x1b/g, '')
+    .replace(/\r/g, '\r\n')
+    .replace(/[\x08\x7f]/g, '\b \b')
+    .replace(/[\x00-\x07\x0b\x0c\x0e-\x1f]/g, (c) => `^${String.fromCharCode(c.charCodeAt(0) + 64)}`)
 }
