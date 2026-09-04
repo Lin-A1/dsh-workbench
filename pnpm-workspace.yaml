@@ -1,0 +1,10 @@
+packages:
+  - .
+allowBuilds:
+  cpu-features: true
+  ssh2: true
+  esbuild: true
+onlyBuiltDependencies:
+  - cpu-features
+  - ssh2
+  - esbuild

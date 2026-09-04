@@ -1,0 +1,14 @@
+- insert:
+    - id: dsh-workbench
+      name: dsh-workbench
+      config:
+        allowlist: []
+        maxSessions: 16
+        defaultPort: 22
+        connectTimeoutMs: 15000
+        idleMs: 800
+        sendTimeoutMs: 30000
+        maxScrollbackBytes: 1048576
+        maxResultBytes: 131072
+        keepaliveIntervalMs: 15000
+        trustedHosts: []
