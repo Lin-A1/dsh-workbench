@@ -42,12 +42,32 @@ body.wb-sidebar-opened.wb-maximized [class*='frame'] {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  position: relative;
   background: #0b0d11;
   color: #d1d7e0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   overflow: hidden;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+}
+
+/* Interactive Split Drag Handle */
+.wb-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 60;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.wb-resize-handle:hover,
+.wb-resize-handle:active {
+  background: #58a6ff;
+  box-shadow: 0 0 10px rgba(88, 166, 255, 0.8);
 }
 
 /* Header Toolbar & Unified Tab Strip */

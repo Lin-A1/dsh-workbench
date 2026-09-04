@@ -10,7 +10,7 @@ import type { ActivityEntry, TerminalCollaborationView } from '../types.ts'
 import type { WorkbenchBrowserTab } from '../protocol.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
 import { BrowserView } from './browser/BrowserView.tsx'
-import { closeSidebarColumn, toggleMaximize } from './column.ts'
+import { closeSidebarColumn, initResizeHandle, toggleMaximize } from './column.ts'
 import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, MaximizeIcon, PlusIcon, TerminalIcon } from './icons.tsx'
 import { TerminalView } from './terminal/TerminalView.tsx'
 import { workbenchClient } from './ws.ts'
@@ -160,8 +160,19 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
     [terminals, activeTabId],
   )
 
+  const resizeHandleRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (resizeHandleRef.current) {
+      return initResizeHandle(resizeHandleRef.current)
+    }
+  }, [])
+
   return (
     <div className="wb-sidebar-root">
+      {/* 拖拽调节分屏宽度手柄 */}
+      <div className="wb-resize-handle" ref={resizeHandleRef} title="拖拽调整分栏宽度" />
+
       {/* 统一的一级标签栏 (Unified Tab Strip - 对标截图) */}
       <div className="wb-sidebar-header">
         <div className="wb-unified-tabstrip">
