@@ -378,6 +378,10 @@ export class WorkbenchGateway {
 
     disposers.push(session.subscribeOutput(text => this.send(ws, { channel: 'terminal', type: 'output', id, text })))
     disposers.push(session.onActivity(entry => this.send(ws, { channel: 'terminal', type: 'activity', id, entry })))
+    disposers.push(session.onBusyChange((busy, actor) => {
+      this.send(ws, { channel: 'terminal', type: 'busy', id, busy, actor })
+      this.broadcastTerminals()
+    }))
     disposers.push(session.onClose(() => {
       this.send(ws, { channel: 'terminal', type: 'closed', id, outcome: 'closed' })
       this.detachTerminal(ws, id)

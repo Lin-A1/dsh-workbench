@@ -456,6 +456,60 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   flex-direction: column;
   background: var(--wb-inset);
+  position: relative;
+}
+.wb-term-busy-banner {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(27, 27, 30, 0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(217, 169, 78, 0.4);
+  color: #d9a94e;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+  pointer-events: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.wb-term-busy-banner.flash {
+  border-color: #ef6f61;
+  background: rgba(239, 111, 97, 0.2);
+  color: #ffa198;
+}
+.wb-term-busy-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: wb-pulse 1.2s infinite ease-in-out;
+  flex: none;
+}
+@keyframes wb-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+.wb-busy-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d9a94e;
+  margin-left: 2px;
+  animation: wb-pulse 1.2s infinite ease-in-out;
+  flex: none;
+}
+.wb-status-busy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #d9a94e;
+  font-weight: 500;
 }
 .wb-xterm-host {
   flex: 1;
@@ -555,6 +609,35 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 @keyframes wb-progress-slide {
   from { transform: translateX(-110%); }
   to { transform: translateX(360%); }
+}
+
+.wb-browser-external-tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  background: rgba(217, 169, 78, 0.08);
+  border-bottom: 1px solid rgba(217, 169, 78, 0.2);
+  color: #d9a94e;
+  font-size: 11px;
+  flex: none;
+}
+.wb-browser-external-link {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--wb-text-1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease;
+}
+.wb-browser-external-link:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .wb-browser-viewport {

@@ -72,6 +72,7 @@ export type WorkbenchServerFrame =
   | { channel: 'terminal'; type: 'output'; id: string; text: string }
   | { channel: 'terminal'; type: 'activity'; id: string; entry: ActivityEntry }
   | { channel: 'terminal'; type: 'opened'; view: TerminalCollaborationView; motd: string }
+  | { channel: 'terminal'; type: 'busy'; id: string; busy: boolean; actor?: 'model' | 'human' }
   | { channel: 'terminal'; type: 'closed'; id: string; outcome: 'closed' | 'already-closing' }
   | { channel: 'terminal'; type: 'profiles'; profiles: TerminalProfile[] }
   | { channel: 'browser'; type: 'tabs'; tabs: WorkbenchBrowserTab[] }

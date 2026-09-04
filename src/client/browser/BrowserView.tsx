@@ -23,6 +23,28 @@ function resolveFrameUrl(raw: string): string {
   return raw
 }
 
+function isExternalWebUrl(url: string): boolean {
+  if (!url || url === 'about:blank') return false
+  if (url.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(url) || url.startsWith('/')) return false
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    return !(
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host === '::1' ||
+      host.endsWith('.local') ||
+      host.startsWith('192.168.') ||
+      host.startsWith('10.') ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+    )
+  }
+  catch {
+    return false
+  }
+}
+
 export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element {
   const [inputUrl, setInputUrl] = useState(tab.url)
   const [currentUrl, setCurrentUrl] = useState(tab.url)
@@ -170,13 +192,19 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
           <p className="wb-start-hint">在上方地址栏输入网址或本地文件路径，人机共用同一视图</p>
           <div className="wb-start-chips">
             <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://127.0.0.1:3080')}>
-              Harness 控制台
+              Harness (3080)
             </button>
             <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:3000')}>
               localhost:3000
             </button>
             <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:5173')}>
-              localhost:5173
+              Vite (5173)
+            </button>
+            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:8080')}>
+              localhost:8080
+            </button>
+            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:8000')}>
+              localhost:8000
             </button>
           </div>
         </div>
@@ -184,6 +212,16 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
         <>
           {/* 加载进度条 */}
           {loading ? <div className="wb-browser-progress" /> : null}
+
+          {/* 外网跨域限制提示条 */}
+          {isExternalWebUrl(currentUrl) && (
+            <div className="wb-browser-external-tip">
+              <span>💡 公网站点常限制 iframe 嵌入（X-Frame-Options），如遇空白或拒绝连接：</span>
+              <button type="button" className="wb-browser-external-link" onClick={handleOpenExternal}>
+                在新窗口打开 ↗
+              </button>
+            </div>
+          )}
 
           {/* 主视口 iframe */}
           <div className="wb-browser-viewport">

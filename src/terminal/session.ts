@@ -46,6 +46,7 @@ export class WorkbenchTerminalSession {
   private readonly closeListeners = new Set<() => void>()
   private readonly outputSubscribers = new Set<(chunk: string) => void>()
   private readonly activityListeners = new Set<(entry: ActivityEntry) => void>()
+  private readonly busyListeners = new Set<(busy: boolean, actor?: 'model' | 'human') => void>()
   private readonly filter = createSentinelLineFilter()
   private readonly activity: ActivityEntry[] = []
   private humanPending = ''
@@ -194,6 +195,26 @@ export class WorkbenchTerminalSession {
     return () => { this.closeListeners.delete(listener) }
   }
 
+  onBusyChange(listener: (busy: boolean, actor?: 'model' | 'human') => void): () => void {
+    this.busyListeners.add(listener)
+    return () => { this.busyListeners.delete(listener) }
+  }
+
+  isBusy(): boolean {
+    return this.pending
+  }
+
+  busyActor(): 'model' | 'human' | undefined {
+    return this.pending ? 'model' : undefined
+  }
+
+  private setBusy(busy: boolean, actor?: 'model' | 'human'): void {
+    this.pending = busy
+    for (const listener of this.busyListeners) {
+      listener(busy, actor)
+    }
+  }
+
   recentActivity(limit: number): ActivityEntry[] {
     return this.activity.slice(Math.max(0, this.activity.length - limit))
   }
@@ -212,6 +233,17 @@ export class WorkbenchTerminalSession {
   humanWrite(data: string): void {
     if (this.closed || this.status.kind === 'exited') {
       throw new Error(`terminal ${this.id} is closed`)
+    }
+    if (this.pending) {
+      // While the model has a command in-flight, protect the command
+      // stream and sentinel protocol from keystroke corruption.
+      // Allow Ctrl+C (\x03) through so the human operator can interrupt
+      // a runaway command if needed.
+      if (data === '\x03') {
+        this.shell.write(data)
+        this.noteInput('human', '^C')
+      }
+      return
     }
     this.shell.write(data)
     // A pipe-spawned shell has no TTY line discipline to echo keystrokes
@@ -283,7 +315,7 @@ export class WorkbenchTerminalSession {
       throw new Error(`terminal ${this.id} already has a send in flight`)
     }
     if (req.signal?.aborted) throw new Error('terminal send aborted')
-    this.pending = true
+    this.setBusy(true, 'model')
     try {
       const mark = this.pos
       let token: string | undefined
@@ -305,7 +337,7 @@ export class WorkbenchTerminalSession {
       return result
     }
     finally {
-      this.pending = false
+      this.setBusy(false)
     }
   }
 
@@ -409,6 +441,8 @@ export class WorkbenchTerminalSession {
       unreadBytes: this.unreadBytes(),
       cols: this.cols,
       rows: this.rows,
+      busy: this.pending,
+      busyActor: this.pending ? 'model' : undefined,
     }
   }
 }

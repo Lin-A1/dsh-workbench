@@ -332,6 +332,8 @@ export function createTools(
               ...TERMINAL_SNAPSHOT_SCHEMA.properties,
               unreadBytes: { type: 'integer', required: true },
               recentActivity: { type: 'array', items: ACTIVITY_SCHEMA },
+              busy: { type: 'boolean' },
+              busyActor: { type: 'string' },
             },
           },
         },

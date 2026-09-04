@@ -52,7 +52,7 @@ class FakeSocket {
   }
 }
 
-const settle = (): Promise<void> => new Promise(r => setTimeout(r, 15))
+const settle = (ms = 50): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 describe('workbench terminal manager & tools', () => {
   it('manages local and ssh terminals and validates schemas', async () => {
@@ -228,5 +228,67 @@ describe('sentinel & filtering', () => {
       text: 'out',
       exitCode: 42,
     })
+  })
+
+  it('protects terminal input during in-flight model command execution and allows Ctrl+C', async () => {
+    const dir = await tempDir()
+    const journal = new JournalStore(dir)
+    const connections: FakeConnection[] = []
+
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 2,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      connectLocal: async () => {
+        const c = new FakeConnection()
+        connections.push(c)
+        return c
+      },
+      onOpen: s => journal.attach(s),
+    })
+
+    const { snapshot } = await manager.open({ kind: 'local', name: 'lock-test' })
+    const session = manager.get(snapshot.terminalId)
+
+    const busyEvents: { busy: boolean; actor?: string }[] = []
+    session.onBusyChange((busy, actor) => {
+      busyEvents.push({ busy, actor })
+    })
+
+    expect(session.isBusy()).toBe(false)
+    expect(session.collaborationView().busy).toBe(false)
+
+    // Start a send in background
+    const sendPromise = session.send({
+      data: 'long-running-cmd',
+      submit: true,
+      idleMs: 50,
+      timeoutMs: 500,
+    })
+
+    // Immediate state check: should be busy
+    expect(session.isBusy()).toBe(true)
+    expect(session.collaborationView().busy).toBe(true)
+    expect(session.collaborationView().busyActor).toBe('model')
+
+    // During busy: ordinary human input should be protected/ignored
+    const writesBefore = connections[0].shell.writes.length
+    session.humanWrite('interfering text\n')
+    expect(connections[0].shell.writes.length).toBe(writesBefore)
+
+    // Ctrl+C (\x03) emergency interrupt should be permitted
+    session.humanWrite('\x03')
+    expect(connections[0].shell.writes.at(-1)).toBe('\x03')
+
+    await sendPromise
+    expect(session.isBusy()).toBe(false)
+    expect(busyEvents).toEqual([
+      { busy: true, actor: 'model' },
+      { busy: false, actor: undefined },
+    ])
+
+    await manager.closeAll()
   })
 })

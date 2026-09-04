@@ -92,6 +92,9 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             })
             setActiveTabId(frame.view.terminalId)
           }
+          else if (frame.type === 'busy') {
+            setTerminals(prev => prev.map(t => t.terminalId === frame.id ? { ...t, busy: frame.busy, busyActor: frame.actor } : t))
+          }
           else if (frame.type === 'activity') {
             const list = activityLog.current.get(frame.id) ?? []
             list.push(frame.entry)
@@ -209,7 +212,8 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             >
               <TerminalIcon size={12} className="wb-tab-icon" />
               <span className="wb-tab-label">{t.name ?? '本地终端'}</span>
-              {t.unreadBytes > 0 && activeTabId !== t.terminalId ? <span className="wb-unread-dot" /> : null}
+              {t.busy ? <span className="wb-busy-dot" title="AI 正在执行命令..." /> : null}
+              {t.unreadBytes > 0 && activeTabId !== t.terminalId && !t.busy ? <span className="wb-unread-dot" /> : null}
               {terminals.length > 1 ? (
                 <span
                   className="wb-tab-close-btn"
@@ -386,6 +390,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
         {activeTerminal && (
           <TerminalView
             activeTerminalId={activeTerminal.terminalId}
+            isBusy={activeTerminal.busy}
             onError={msg => setGlobalError(msg)}
           />
         )}
@@ -428,6 +433,15 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
               </span>
               <span className="wb-status-sep" />
               <span className="wb-status-path" title={activeTerminal.cwd}>{activeTerminal.cwd || '~'}</span>
+              {activeTerminal.busy ? (
+                <>
+                  <span className="wb-status-sep" />
+                  <span className="wb-status-busy-pill">
+                    <span className="wb-term-busy-pulse" />
+                    AI 执行中
+                  </span>
+                </>
+              ) : null}
             </>
           ) : activeBrowser ? (
             <>

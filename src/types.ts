@@ -58,6 +58,8 @@ export interface TerminalCollaborationView extends TerminalSnapshot {
   unreadBytes: number
   cols: number
   rows: number
+  busy?: boolean
+  busyActor?: 'model' | 'human'
 }
 
 /** One changed file in `git status --porcelain` terms. */
