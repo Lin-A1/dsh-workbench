@@ -65,9 +65,9 @@ export class WorkbenchClient {
       this.ws.send(JSON.stringify(frame))
       return
     }
-    // Socket still dialing: queue boot-time frames (ensure/attach) and flush
-    // on open — dropping them would leave the workbench silently empty.
-    if (this.ws && this.ws.readyState === WebSocket.CONNECTING && this.pending.length < 64) {
+    // Socket disconnected or still connecting: queue lifecycle and user intent
+    // frames so clicking "New Terminal" or switching views during reconnect never drops.
+    if (!this.stopped && this.pending.length < 128) {
       this.pending.push(frame)
     }
   }
@@ -101,9 +101,12 @@ export class WorkbenchClient {
     ws.onclose = () => {
       this.setConnected(false)
       this.ws = undefined
-      this.pending = []
-      if (this.stopped) return
-      const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** this.retry)
+      if (this.stopped) {
+        this.pending = []
+        return
+      }
+      // Agile reconnect: capped at 2s instead of long exponential backoff
+      const delay = Math.min(2000, 350 * (this.retry + 1))
       this.retry += 1
       this.retryTimer = setTimeout(() => this.open(), delay)
     }

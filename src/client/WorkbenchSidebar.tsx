@@ -86,6 +86,10 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             }
           }
           else if (frame.type === 'opened') {
+            setTerminals(prev => {
+              if (prev.some(t => t.terminalId === frame.view.terminalId)) return prev
+              return [...prev, frame.view]
+            })
             setActiveTabId(frame.view.terminalId)
           }
           else if (frame.type === 'activity') {

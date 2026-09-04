@@ -15,6 +15,7 @@ import { renderList, renderOpen, renderRead, renderSend } from './render.ts'
 import { JournalStore } from './terminal/journal.ts'
 import { WorkbenchTerminalManager } from './terminal/manager.ts'
 import { ProfileStore } from './terminal/profiles.ts'
+import { TerminalStore } from './terminal/store.ts'
 import type { TerminalKind } from './types.ts'
 
 export const name = 'dsh-workbench'
@@ -223,6 +224,8 @@ export function createTools(
           await manager.close(snapshot.terminalId)
           throw new Error('workbench terminal open aborted')
         }
+        const view = manager.get(snapshot.terminalId).collaborationView()
+        gateway?.broadcastTerminalOpened(view, motd)
         return cleanLossless({ ...snapshot, motd })
       },
       presentCall: args => ({
@@ -433,6 +436,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)
   const profiles = new ProfileStore(resolved.dataDir)
   const journal = new JournalStore(resolved.dataDir)
+  const terminalStore = new TerminalStore(resolved.dataDir)
 
   const manager = new WorkbenchTerminalManager({
     allowlist: resolved.allowlist,
@@ -442,6 +446,14 @@ export function apply(ctx: Context, config: Config = {}): void {
     maxScrollbackBytes: resolved.maxScrollbackBytes,
     keepaliveIntervalMs: resolved.keepaliveIntervalMs,
     onOpen: session => journal.attach(session),
+    terminalStore,
+  })
+
+  // Restore terminals that were active before service restart so sessions survive
+  void manager.restorePersisted().then((count) => {
+    if (count > 0) {
+      gateway?.broadcastTerminals()
+    }
   })
 
   ctx.effect(() => () => {

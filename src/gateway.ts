@@ -14,6 +14,7 @@ import type { JournalStore } from './terminal/journal.ts'
 import type { WorkbenchTerminalManager } from './terminal/manager.ts'
 import type { ProfileStore } from './terminal/profiles.ts'
 import type { TerminalOpenRequest, WorkbenchBrowserTab, WorkbenchClientFrame, WorkbenchServerFrame } from './protocol.ts'
+import type { TerminalCollaborationView } from './types.ts'
 
 interface WebServerFace {
   register(route: { kind: 'exact' | 'prefix'; path: string; handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }): () => void
@@ -421,6 +422,16 @@ export class WorkbenchGateway {
 
     const view = this.options.terminalManager.get(snapshot.terminalId).collaborationView()
     this.send(ws, { channel: 'terminal', type: 'opened', view, motd })
+    this.broadcastTerminals()
+    this.broadcastSummon()
+  }
+
+  /** Broadcast a newly opened terminal to all connected clients and reveal the panel. */
+  broadcastTerminalOpened(view: TerminalCollaborationView, motd: string): void {
+    for (const ws of this.sockets) {
+      this.send(ws, { channel: 'terminal', type: 'opened', view, motd })
+    }
+    this.broadcastTerminals()
     this.broadcastSummon()
   }
 

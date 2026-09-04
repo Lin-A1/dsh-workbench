@@ -8,6 +8,7 @@ import { hostAllowed } from './allowlist.ts'
 import { connectLocal } from './local.ts'
 import { WorkbenchTerminalSession } from './session.ts'
 import { connectSsh } from './ssh.ts'
+import type { TerminalStore } from './store.ts'
 import type { ActivityEntry, TerminalCollaborationView, TerminalConnection, TerminalKind, TerminalSnapshot } from '../types.ts'
 
 export const INITIAL_COLS = 220
@@ -23,9 +24,11 @@ export interface ManagerOptions {
   connectSsh?: typeof connectSsh
   connectLocal?: typeof connectLocal
   onOpen?: (session: WorkbenchTerminalSession) => void
+  terminalStore?: TerminalStore
 }
 
 export interface OpenOptions {
+  id?: string
   kind: TerminalKind
   name?: string
   sessionId?: string
@@ -48,12 +51,45 @@ export class WorkbenchTerminalManager {
 
   constructor(private readonly options: ManagerOptions) {}
 
+  async restorePersisted(): Promise<number> {
+    if (!this.options.terminalStore) return 0
+    const specs = await this.options.terminalStore.list()
+    let restored = 0
+    for (const spec of specs) {
+      if (this.sessions.has(spec.id)) continue
+      try {
+        await this.open({
+          id: spec.id,
+          kind: spec.kind,
+          name: spec.name,
+          sessionId: spec.sessionId,
+          cwd: spec.cwd,
+          host: spec.host,
+          user: spec.user,
+          port: spec.port,
+          identityFile: spec.identityFile,
+          echo: spec.echo,
+        })
+        restored++
+      }
+      catch (err) {
+        console.warn(`[dsh-workbench] failed to restore terminal ${spec.id}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    return restored
+  }
+
   async open(req: OpenOptions): Promise<{ snapshot: TerminalSnapshot; motd: string }> {
+    if (req.id && this.sessions.has(req.id)) {
+      const existing = this.sessions.get(req.id)!
+      return { snapshot: existing.snapshot(), motd: '' }
+    }
+
     if (this.sessions.size >= this.options.maxSessions) {
       throw new Error(`workbench: session limit ${this.options.maxSessions} reached`)
     }
 
-    const id = `wb-term-${process.pid}-${++this.seq}`
+    const id = req.id || `wb-term-${process.pid}-${++this.seq}`
     let connection: TerminalConnection
 
     if (req.kind === 'ssh') {
@@ -109,6 +145,23 @@ export class WorkbenchTerminalManager {
     this.sessions.set(id, session)
     session.onClose(() => this.notifyChange())
     this.options.onOpen?.(session)
+
+    if (this.options.terminalStore) {
+      void this.options.terminalStore.save({
+        id,
+        kind: req.kind,
+        name: req.name,
+        sessionId: req.sessionId,
+        cwd: req.cwd,
+        host: req.host,
+        user: req.user,
+        port: req.port,
+        identityFile: req.identityFile,
+        echo: req.echo,
+        createdAt: Date.now(),
+      })
+    }
+
     this.notifyChange()
     return { snapshot: session.snapshot(), motd }
   }
@@ -159,6 +212,7 @@ export class WorkbenchTerminalManager {
   async close(terminalId: string): Promise<'closed' | 'already-closing'> {
     const session = this.get(terminalId)
     this.sessions.delete(terminalId)
+    void this.options.terminalStore?.remove(terminalId)
     const outcome = await session.close() ? 'closed' : 'already-closing'
     this.notifyChange()
     return outcome
