@@ -53,6 +53,28 @@ export interface TerminalCollaborationView extends TerminalSnapshot {
   rows: number
 }
 
+/** One changed file in `git status --porcelain` terms. */
+export interface GitFileChange {
+  /** index status letter (M/A/D/R/…) or space */
+  x: string
+  /** worktree status letter or '?'. '?' on both means untracked. */
+  y: string
+  path: string
+}
+
+/** Snapshot of a repository worktree for the Git panel. */
+export interface GitStatusView {
+  at: number
+  /** current branch name, or detached HEAD short sha */
+  branch: string | null
+  ahead: number
+  behind: number
+  /** total added/deleted lines across staged+unstaged diffs */
+  additions: number
+  deletions: number
+  files: GitFileChange[]
+}
+
 export type SendWaitReason = 'command_done' | 'inferred_idle' | 'timeout' | 'session_exit'
 
 export interface SendResult {

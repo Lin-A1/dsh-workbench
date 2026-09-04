@@ -182,6 +182,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
       {/* 分屏宽度拖拽手柄（双击恢复 48vw 默认半屏） */}
       <div className="wb-resize-handle" ref={resizeHandleRef} title="拖拽调整分栏宽度 · 双击复位" />
 
+      <div className="wb-panel-card">
       {/* 统一的一级标签栏：品牌区 + 终端 / 网页 / Git / 动态 平级铺开 */}
       <div className="wb-sidebar-header">
         <div className="wb-brand">
@@ -390,20 +391,10 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
         )}
 
         {activeTabId === 'git' && (
-          <div className="wb-feature-card">
-            <div className="wb-card-inner">
-              <div className="wb-icon-square">
-                <GitBranchIcon size={22} />
-              </div>
-              <h4>Git 协同管理</h4>
-              <p>未暂存 / 已暂存文件树、双栏 Diff 对比、人机协同 Commit 与分支检出，将在后续版本就绪。</p>
-              <div className="wb-feature-tags">
-                <code>status</code>
-                <code>diff</code>
-                <code>stage</code>
-                <code>commit</code>
-              </div>
-            </div>
+          <div className="wb-empty-feed" style={{ marginTop: 90 }}>
+            <GitBranchIcon size={28} className="wb-empty-icon" />
+            <p className="wb-empty-title">Git 协同面板</p>
+            <p className="wb-hint">更改列表、分支视图与人机协同提交，将在后续版本加入。</p>
           </div>
         )}
 
@@ -472,6 +463,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             {connected ? '协同已同步' : '网关重连中'}
           </span>
         </div>
+      </div>
       </div>
     </div>
   )
