@@ -10,7 +10,7 @@ import type { ActivityEntry, TerminalCollaborationView } from '../types.ts'
 import type { WorkbenchBrowserTab } from '../protocol.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
 import { BrowserView } from './browser/BrowserView.tsx'
-import { closeSidebarColumn, initResizeHandle, toggleMaximize } from './column.ts'
+import { closeSidebarColumn, initResizeHandle, openSidebarColumn, toggleMaximize } from './column.ts'
 import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, MaximizeIcon, PlusIcon, ServerIcon, TerminalIcon } from './icons.tsx'
 import { TerminalView } from './terminal/TerminalView.tsx'
 import { workbenchClient } from './ws.ts'
@@ -54,6 +54,11 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             if (frame.terminals.length > 0 && !activeTabId) {
               setActiveTabId(frame.terminals[0].terminalId)
             }
+          }
+          else if (frame.type === 'summon') {
+            // The model opened a terminal/browser tab (or called workbench_show):
+            // reveal the panel so its actions are visible to the human.
+            openSidebarColumn()
           }
           break
         }

@@ -399,6 +399,26 @@ export function createTools(
       },
       presentCall: args => ({ card: 'generic', title: `Open in Workbench Browser: ${args.title || args.url}`, kind: 'execute' }),
     }),
+
+    defineTool({
+      name: 'workbench_show',
+      description: 'Reveal the collaborative workbench panel in the web UI — opens the right-hand split if the human has it closed. No terminal or browser side effects; use it when you want the human to watch a terminal session or a preview you are about to create.',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { summoned: { type: 'boolean', required: true } },
+        },
+        render: (_args, value) => [{ type: 'text', text: value.summoned ? 'workbench panel revealed to the human' : 'workbench gateway unavailable' }],
+      },
+      execute() {
+        if (!gateway) throw new Error('workbench gateway not available')
+        gateway.broadcastSummon()
+        return Promise.resolve(cleanLossless({ summoned: true }))
+      },
+      presentCall: () => ({ card: 'generic', title: 'Show Workbench', kind: 'execute' }),
+    }),
   ]
 }
 

@@ -306,7 +306,20 @@ export class WorkbenchGateway {
     for (const ws of this.sockets) {
       this.send(ws, frame)
     }
+    this.broadcastSummon()
     return tab
+  }
+
+  /**
+   * Ask every connected client to reveal the workbench panel. Fired when the
+   * model opens a terminal or browser tab (or calls workbench_show) so its
+   * actions become visible without the human hunting for the toggle.
+   */
+  broadcastSummon(): void {
+    const frame: WorkbenchServerFrame = { channel: 'workbench', type: 'summon' }
+    for (const ws of this.sockets) {
+      this.send(ws, frame)
+    }
   }
 
   closeBrowserTab(id: string): void {
@@ -408,6 +421,7 @@ export class WorkbenchGateway {
 
     const view = this.options.terminalManager.get(snapshot.terminalId).collaborationView()
     this.send(ws, { channel: 'terminal', type: 'opened', view, motd })
+    this.broadcastSummon()
   }
 
   broadcastTerminals(): void {

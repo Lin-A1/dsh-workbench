@@ -65,6 +65,7 @@ export type WorkbenchClientFrame =
 /** Server -> Client Frames */
 export type WorkbenchServerFrame =
   | { channel: 'workbench'; type: 'hello'; terminals: TerminalCollaborationView[]; profiles: TerminalProfile[]; browserTabs?: WorkbenchBrowserTab[]; sessionId?: string }
+  | { channel: 'workbench'; type: 'summon' }
   | { channel: 'terminal'; type: 'terminals'; terminals: TerminalCollaborationView[] }
   | { channel: 'terminal'; type: 'attached'; id: string; view: TerminalCollaborationView; replay: ReplayTail }
   | { channel: 'terminal'; type: 'detached'; id: string }
