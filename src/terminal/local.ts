@@ -5,7 +5,7 @@
  * @module dsh-workbench/terminal/local
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -18,19 +18,43 @@ export interface LocalShellRequest {
   rows: number
 }
 
+let bashProbe: string | undefined | null = null
+
+/**
+ * Locate a real Git Bash (not the WSL/Store stubs that also answer to
+ * `bash`): static install roots first, then PATH via where.exe with the
+ * stub paths filtered out. Probed once per process.
+ */
+function findGitBash(): string | undefined {
+  if (bashProbe !== null) return bashProbe ?? undefined
+  const statics = [
+    process.env.DSH_GIT_BASH,
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    `${process.env.ProgramFiles || 'C:\\Program Files'}\\Git\\bin\\bash.exe`,
+    `${process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'}\\Git\\bin\\bash.exe`,
+    `${process.env.LocalAppData || ''}\\Programs\\Git\\bin\\bash.exe`,
+    'D:\\Git\\bin\\bash.exe',
+  ]
+  let found = statics.find(p => p !== undefined && p !== '' && existsSync(p))
+  if (found === undefined) {
+    try {
+      const { stdout } = spawnSync('where.exe', ['bash'], { encoding: 'utf8', timeout: 3000 })
+      const onPath = String(stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+      found = onPath.find(p => !/WindowsApps|System32/i.test(p) && existsSync(p))
+    }
+    catch {
+      // where.exe unavailable — stay on the PowerShell fallback
+    }
+  }
+  bashProbe = found
+  return found
+}
+
 function resolveShellCommand(): { file: string; args: string[] } {
   if (process.platform === 'win32') {
-    // Probe standard Git Bash installation paths on Windows
-    const candidates = [
-      'C:\\Program Files\\Git\\bin\\bash.exe',
-      `${process.env.ProgramFiles || 'C:\\Program Files'}\\Git\\bin\\bash.exe`,
-      `${process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'}\\Git\\bin\\bash.exe`,
-      `${process.env.LocalAppData || ''}\\Programs\\Git\\bin\\bash.exe`,
-    ]
-    for (const p of candidates) {
-      if (p && existsSync(p)) {
-        return { file: p, args: ['--login', '-i'] }
-      }
+    const bash = findGitBash()
+    if (bash !== undefined) {
+      return { file: bash, args: ['--login', '-i'] }
     }
     // Fallback to powershell with UTF-8 encoding command
     return {
@@ -76,19 +100,31 @@ export async function connectLocal(req: LocalShellRequest): Promise<TerminalConn
       const listeners: ((chunk: string) => void)[] = []
       const closeListeners: (() => void)[] = []
 
+      // Pipe-spawned bash prints two harmless no-controlling-terminal warnings
+      // on startup; drop them so sessions open on a clean prompt.
+      const startupNoise = /^(bash|sh): (cannot set terminal process group|no job control in this shell)/
+      const isBashish = /bash|sh(\.exe)?$/i.test(file)
+      const stripNoise = (text: string): string => {
+        if (!isBashish) return text
+        return text
+          .split(/(?<=\r?\n)/)
+          .filter(line => !startupNoise.test(line))
+          .join('')
+      }
+
       // Use StringDecoder to prevent chunk-boundary multi-byte truncation mojibake
       const stdoutDecoder = new StringDecoder('utf8')
       const stderrDecoder = new StringDecoder('utf8')
 
       activeProc.stdout.on('data', (data: Buffer) => {
-        const text = stdoutDecoder.write(data)
+        const text = stripNoise(stdoutDecoder.write(data))
         if (text) {
           for (const l of listeners) l(text)
         }
       })
 
       activeProc.stderr.on('data', (data: Buffer) => {
-        const text = stderrDecoder.write(data)
+        const text = stripNoise(stderrDecoder.write(data))
         if (text) {
           for (const l of listeners) l(text)
         }

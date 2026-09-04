@@ -356,6 +356,9 @@ export class WorkbenchGateway {
     this.detachTerminal(ws, id)
     const session = this.options.terminalManager.get(id)
     const journal = await this.options.journalStore.replayTail(id)
+    // Fresh sessions have no journal yet; the live display buffer still holds
+    // the shell banner and prompt — replay it so attach never lands black.
+    const replayText = journal.text.length > 0 ? journal.text : session.displayBacklog()
     const disposers: (() => void)[] = []
 
     disposers.push(session.subscribeOutput(text => this.send(ws, { channel: 'terminal', type: 'output', id, text })))
@@ -366,7 +369,7 @@ export class WorkbenchGateway {
     }))
 
     this.attachments.get(ws)?.set(id, { disposers })
-    this.send(ws, { channel: 'terminal', type: 'attached', id, view: session.collaborationView(), replay: journal })
+    this.send(ws, { channel: 'terminal', type: 'attached', id, view: session.collaborationView(), replay: { text: replayText, truncated: journal.truncated } })
   }
 
   private detachTerminal(ws: WebSocket, id: string): void {

@@ -122,6 +122,12 @@ export function TerminalView({ activeTerminalId, onError }: TerminalViewProps): 
     host.appendChild(handle.term.element ?? document.createElement('div'))
     try {
       handle.fit.fit()
+      // xterm measures with fallback metrics until webfonts land; refit once
+      // they do and once layout settles, or the first paint shows nothing.
+      requestAnimationFrame(() => { try { handle.fit.fit() } catch { /* ignore */ } })
+      if (typeof document !== 'undefined' && 'fonts' in document) {
+        void document.fonts.ready.then(() => { try { handle.fit.fit() } catch { /* ignore */ } })
+      }
       handle.term.focus()
     }
     catch {

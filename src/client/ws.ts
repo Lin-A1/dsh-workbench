@@ -20,6 +20,7 @@ export class WorkbenchClient {
   private stopped = false
   private connected = false
   private currentSessionId: string | undefined
+  private pending: WorkbenchClientFrame[] = []
 
   setSessionId(sessionId?: string): void {
     if (this.currentSessionId !== sessionId) {
@@ -62,6 +63,12 @@ export class WorkbenchClient {
     }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(frame))
+      return
+    }
+    // Socket still dialing: queue boot-time frames (ensure/attach) and flush
+    // on open — dropping them would leave the workbench silently empty.
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING && this.pending.length < 64) {
+      this.pending.push(frame)
     }
   }
 
@@ -76,6 +83,8 @@ export class WorkbenchClient {
       // Request fresh snapshot on reconnect; do not blindly attach stale IDs from prior processes
       this.attachedTerminals.clear()
       ws.send(JSON.stringify({ channel: 'workbench', type: 'hello', sessionId: this.currentSessionId } satisfies WorkbenchClientFrame))
+      for (const frame of this.pending) ws.send(JSON.stringify(frame))
+      this.pending = []
     }
 
     ws.onmessage = (event) => {
@@ -92,6 +101,7 @@ export class WorkbenchClient {
     ws.onclose = () => {
       this.setConnected(false)
       this.ws = undefined
+      this.pending = []
       if (this.stopped) return
       const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** this.retry)
       this.retry += 1

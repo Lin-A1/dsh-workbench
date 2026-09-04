@@ -23,20 +23,18 @@ export function ActivityFeed({ feed, terminals }: {
   return (
     <div className="wb-activity-list">
       {feed.map((entry, idx) => (
-        <div key={`${entry.id}-${entry.at}-${idx}`} className="wb-activity-item">
-          <span className={`wb-badge ${entry.source}`}>
-            {entry.source === 'human' ? '人' : 'AI'}
-          </span>
-          <div className="wb-activity-content">
-            <div className="wb-activity-meta">
-              <span className="wb-term-name">
-                <TerminalIcon size={11} />
-                <span>{nameOf(entry.id)}</span>
-              </span>
-              <span className="wb-activity-time">{new Date(entry.at).toTimeString().slice(0, 8)}</span>
-            </div>
-            <code className="wb-activity-code">$ {entry.text.replace(/\n+/g, ' ')}</code>
+        <div key={`${entry.id}-${entry.at}-${idx}`} className={`wb-activity-item src-${entry.source}`}>
+          <div className="wb-activity-meta">
+            <span className={`wb-badge ${entry.source}`}>
+              {entry.source === 'human' ? '人' : 'AI'}
+            </span>
+            <span className="wb-term-name">
+              <TerminalIcon size={10} />
+              <span>{nameOf(entry.id)}</span>
+            </span>
+            <span className="wb-activity-time">{new Date(entry.at).toTimeString().slice(0, 8)}</span>
           </div>
+          <code className="wb-activity-code"><span className="wb-prompt-token">$ </span>{entry.text.replace(/\n+/g, ' ').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, (c) => `^${String.fromCharCode(c.charCodeAt(0) + 64)}`)}</code>
         </div>
       ))}
     </div>
