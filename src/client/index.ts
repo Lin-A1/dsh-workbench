@@ -14,18 +14,26 @@ import { WorkbenchSidebar } from './WorkbenchSidebar.tsx'
 export const inject = ['slots', 'layout']
 
 const WORKBENCH_SIDEBAR_CSS = `${xtermCss}
-/* Force stable three-column side-by-side grid when sidebar is opened */
+/* Persistent wide-screen side-by-side layout (48vw half-screen width) */
 body.wb-sidebar-opened [class*='detailsCol'] {
   display: block !important;
-  width: min(520px, 42vw) !important;
-  min-width: 320px !important;
-  max-width: 600px !important;
+  width: min(720px, 48vw) !important;
+  min-width: 440px !important;
+  max-width: 900px !important;
   overflow: visible !important;
   flex: none !important;
 }
 
 body.wb-sidebar-opened [class*='frame'] {
-  grid-template-columns: 280px minmax(0, 1fr) min(520px, 42vw) !important;
+  grid-template-columns: 280px minmax(0, 1fr) min(720px, 48vw) !important;
+}
+
+body.wb-sidebar-opened.wb-maximized [class*='detailsCol'] {
+  width: calc(100vw - 320px) !important;
+}
+
+body.wb-sidebar-opened.wb-maximized [class*='frame'] {
+  grid-template-columns: 280px minmax(0, 1fr) calc(100vw - 320px) !important;
 }
 
 /* Base Workbench Sidebar Shell */
@@ -597,6 +605,156 @@ body.wb-sidebar-opened [class*='frame'] {
 .wb-header-toggle-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.15);
+  color: #f0f6fc;
+}
+
+/* Browser View & Omnibox Toolbar */
+.wb-browser-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #0d1117;
+}
+
+.wb-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #161b22;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex: none;
+}
+
+.wb-browser-nav-btns {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.wb-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8b949e;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.wb-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f0f6fc;
+}
+
+.wb-browser-omnibox {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #090d13;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 3px 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wb-browser-omnibox:focus-within {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+}
+
+.wb-omnibox-icon {
+  color: #6e7681;
+  flex: none;
+}
+
+.wb-omnibox-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #e6edf3;
+  font-size: 11.5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Consolas, monospace;
+  outline: none;
+  min-width: 0;
+}
+
+.wb-browser-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.wb-browser-progress {
+  height: 2px;
+  background: #58a6ff;
+  width: 100%;
+}
+
+.wb-browser-viewport {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #ffffff;
+}
+
+.wb-browser-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #ffffff;
+  display: block;
+}
+
+.wb-tab-title {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-tab-close-icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 3px;
+  color: #6e7681;
+  margin-left: 2px;
+}
+
+.wb-tab-close-icon:hover {
+  background: rgba(248, 81, 73, 0.2);
+  color: #ff7b72;
+}
+
+.wb-tab-add {
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.wb-action-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8b949e;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wb-action-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
   color: #f0f6fc;
 }
 `

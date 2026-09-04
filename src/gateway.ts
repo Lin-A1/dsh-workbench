@@ -1,17 +1,19 @@
 /**
  * Multi-channel WebSocket gateway for collaborative workbench surfaces.
- * Multiplexes terminal, git, and browser operations over a single secure connection.
+ * Multiplexes terminal, browser, and git operations over a single secure connection.
  * @module dsh-workbench/gateway
  */
 
+import { readFile, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { extname, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { JournalStore } from './terminal/journal.ts'
 import type { WorkbenchTerminalManager } from './terminal/manager.ts'
 import type { ProfileStore } from './terminal/profiles.ts'
-import type { TerminalOpenRequest, WorkbenchClientFrame, WorkbenchServerFrame } from './protocol.ts'
+import type { TerminalOpenRequest, WorkbenchBrowserTab, WorkbenchClientFrame, WorkbenchServerFrame } from './protocol.ts'
 
 interface WebServerFace {
   register(route: { kind: 'exact' | 'prefix'; path: string; handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }): () => void
@@ -27,7 +29,23 @@ export interface GatewayOptions {
 
 const MAX_FRAME_BYTES = 64 * 1024
 
-export function registerWorkbenchGateway(ctx: Context, options: GatewayOptions): void {
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+}
+
+export function registerWorkbenchGateway(ctx: Context, options: GatewayOptions): WorkbenchGateway {
   const webServer = (ctx as unknown as { webServer?: WebServerFace }).webServer
   if (!webServer) {
     throw new Error('dsh-workbench requires the webServer service; please install into a web profile')
@@ -41,6 +59,12 @@ export function registerWorkbenchGateway(ctx: Context, options: GatewayOptions):
     path: '/dsh-workbench/snapshot',
     handler: (req, res) => { void gateway.handleSnapshot(req, res) },
   }), 'workbench: snapshot route')
+
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/dsh-workbench/preview',
+    handler: (req, res) => { void gateway.handlePreview(req, res) },
+  }), 'workbench: local preview route')
 
   ctx.effect(() => webServer.registerUpgrade({
     path: '/dsh-workbench/ws',
@@ -59,6 +83,8 @@ export function registerWorkbenchGateway(ctx: Context, options: GatewayOptions):
   }, 'workbench: gateway teardown')
 
   ctx.effect(() => options.terminalManager.onChange(() => gateway.broadcastTerminals()), 'workbench: terminal changes')
+
+  return gateway
 }
 
 interface Attachment {
@@ -69,6 +95,8 @@ export class WorkbenchGateway {
   private readonly sockets = new Set<WebSocket>()
   private readonly socketSessions = new Map<WebSocket, string | undefined>()
   private readonly attachments = new Map<WebSocket, Map<string, Attachment>>()
+  private readonly browserTabs = new Map<string, WorkbenchBrowserTab>()
+  private tabSeq = 0
   private disposed = false
 
   constructor(private readonly options: GatewayOptions) {}
@@ -83,9 +111,55 @@ export class WorkbenchGateway {
       ok: true,
       terminals: this.options.terminalManager.collaborationViews(),
       profiles: await this.options.profileStore.list(),
+      browserTabs: [...this.browserTabs.values()],
     }
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify(body))
+  }
+
+  async handlePreview(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405).end('Method Not Allowed')
+      return
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://127.0.0.1')
+      let filePath = url.searchParams.get('file')
+      if (!filePath) {
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('missing ?file= parameter')
+        return
+      }
+
+      // Strip file:// prefix if present
+      if (filePath.startsWith('file:///')) {
+        filePath = decodeURIComponent(filePath.slice(process.platform === 'win32' ? 8 : 7))
+      }
+      else if (filePath.startsWith('file://')) {
+        filePath = decodeURIComponent(filePath.slice(7))
+      }
+
+      const canonicalPath = resolve(filePath)
+      const st = await stat(canonicalPath)
+      if (!st.isFile()) {
+        res.writeHead(404).end('Not a file')
+        return
+      }
+
+      const ext = extname(canonicalPath).toLowerCase()
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+      const content = await readFile(canonicalPath)
+
+      res.writeHead(200, {
+        'content-type': contentType,
+        'content-length': content.length,
+        'x-content-type-options': 'nosniff',
+      })
+      res.end(content)
+    }
+    catch (err) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end(`File preview error: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   handleConnection(ws: WebSocket): void {
@@ -130,6 +204,25 @@ export class WorkbenchGateway {
       if (frame.type === 'hello') {
         if (frame.sessionId) this.socketSessions.set(ws, frame.sessionId)
         await this.sendHello(ws, frame.sessionId)
+      }
+      return
+    }
+
+    if (frame.channel === 'browser') {
+      switch (frame.type) {
+        case 'open': {
+          this.openBrowserTab(frame.url, frame.title, frame.sessionId ?? this.socketSessions.get(ws))
+          return
+        }
+        case 'close': {
+          this.closeBrowserTab(frame.id)
+          return
+        }
+        case 'list': {
+          const sessionId = frame.sessionId ?? this.socketSessions.get(ws)
+          this.send(ws, { channel: 'browser', type: 'tabs', tabs: this.listBrowserTabs(sessionId) })
+          return
+        }
       }
       return
     }
@@ -199,8 +292,51 @@ export class WorkbenchGateway {
     }
 
     if (frame.channel === 'git') {
-      // Phase 2 hook
       this.send(ws, { channel: 'git', type: 'status', status: null })
+    }
+  }
+
+  openBrowserTab(url: string, title?: string, sessionId?: string): WorkbenchBrowserTab {
+    const id = `wb-page-${++this.tabSeq}`
+    const resolvedTitle = title || this.deriveTitle(url)
+    const tab: WorkbenchBrowserTab = { id, url, title: resolvedTitle, sessionId }
+    this.browserTabs.set(id, tab)
+
+    const frame: WorkbenchServerFrame = { channel: 'browser', type: 'opened', tab }
+    for (const ws of this.sockets) {
+      this.send(ws, frame)
+    }
+    return tab
+  }
+
+  closeBrowserTab(id: string): void {
+    if (this.browserTabs.delete(id)) {
+      const frame: WorkbenchServerFrame = { channel: 'browser', type: 'closed', id }
+      for (const ws of this.sockets) {
+        this.send(ws, frame)
+      }
+    }
+  }
+
+  listBrowserTabs(sessionId?: string): WorkbenchBrowserTab[] {
+    let list = [...this.browserTabs.values()]
+    if (sessionId) {
+      list = list.filter(t => !t.sessionId || t.sessionId === sessionId)
+    }
+    return list
+  }
+
+  private deriveTitle(rawUrl: string): string {
+    try {
+      if (rawUrl.startsWith('file://')) {
+        const parts = rawUrl.split(/[\\/]/)
+        return parts[parts.length - 1] || '本地文档'
+      }
+      const u = new URL(rawUrl)
+      return u.hostname || rawUrl
+    }
+    catch {
+      return rawUrl.slice(0, 20)
     }
   }
 
@@ -211,6 +347,7 @@ export class WorkbenchGateway {
       type: 'hello',
       terminals: this.options.terminalManager.collaborationViews(activeSessionId),
       profiles: await this.options.profileStore.list(),
+      browserTabs: this.listBrowserTabs(activeSessionId),
       sessionId: activeSessionId,
     })
   }

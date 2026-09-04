@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolResult } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
-import { registerWorkbenchGateway } from './gateway.ts'
+import { registerWorkbenchGateway, type WorkbenchGateway } from './gateway.ts'
 import { renderList, renderOpen, renderRead, renderSend } from './render.ts'
 import { JournalStore } from './terminal/journal.ts'
 import { WorkbenchTerminalManager } from './terminal/manager.ts'
@@ -172,6 +172,7 @@ export function createTools(
   manager: WorkbenchTerminalManager,
   config: ResolvedConfig,
   profiles?: ProfileStore,
+  gateway?: WorkbenchGateway,
 ): ToolDefinition[] {
   const maxResultBytes = config.maxResultBytes
 
@@ -368,6 +369,36 @@ export function createTools(
       },
       presentCall: args => ({ card: 'generic', title: `Close Terminal ${args.terminalId}`, kind: 'delete' }),
     }),
+
+    defineTool({
+      name: 'workbench_browser_open',
+      description: 'Open a web page or local HTML file in the collaborative workbench browser panel. The human operator will see the page rendered live on the right-hand workbench view. Supports localhost URLs (e.g. "http://localhost:3000") and local HTML files (e.g. "D:/docs/page.html").',
+      parameters: {
+        url: { type: 'string', required: true, description: 'The URL or local file path to open in the workbench browser.' },
+        title: { type: 'string', description: 'Tab display title.' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            url: { type: 'string', required: true },
+            title: { type: 'string', required: true },
+          },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: `opened workbench browser tab "${value.title}" [${value.url}]`,
+        }],
+      },
+      execute(args: { url: string; title?: string }) {
+        if (!gateway) throw new Error('workbench gateway not available')
+        const tab = gateway.openBrowserTab(args.url, args.title)
+        return Promise.resolve(cleanLossless(tab))
+      },
+      presentCall: args => ({ card: 'generic', title: `Open in Workbench Browser: ${args.title || args.url}`, kind: 'execute' }),
+    }),
   ]
 }
 
@@ -397,7 +428,20 @@ export function apply(ctx: Context, config: Config = {}): void {
     void manager.closeAll()
   }, 'workbench: manager teardown')
 
-  for (const tool of createTools(manager, resolved, profiles)) {
+  let gateway: WorkbenchGateway | undefined
+  try {
+    gateway = registerWorkbenchGateway(ctx, {
+      terminalManager: manager,
+      profileStore: profiles,
+      journalStore: journal,
+      trustedHosts: resolved.trustedHosts,
+    })
+  }
+  catch (err) {
+    console.warn(`[dsh-workbench] gateway registration skipped: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  for (const tool of createTools(manager, resolved, profiles, gateway)) {
     ctx.tools.register(tool)
   }
 
@@ -416,17 +460,5 @@ export function apply(ctx: Context, config: Config = {}): void {
         return () => {}
       }
     }, 'workbench: prompt section')
-  }
-
-  try {
-    registerWorkbenchGateway(ctx, {
-      terminalManager: manager,
-      profileStore: profiles,
-      journalStore: journal,
-      trustedHosts: resolved.trustedHosts,
-    })
-  }
-  catch (err) {
-    console.warn(`[dsh-workbench] gateway registration skipped: ${err instanceof Error ? err.message : String(err)}`)
   }
 }

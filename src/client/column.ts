@@ -14,7 +14,7 @@ let layoutFace: LayoutFace | undefined
 let observer: MutationObserver | undefined
 let openState = false
 
-const SIDEBAR_WIDTH = '460px'
+const SIDEBAR_WIDTH = 'min(720px, 48vw)'
 
 export function setLayoutFace(face?: LayoutFace): void {
   layoutFace = face

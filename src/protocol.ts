@@ -37,6 +37,13 @@ export interface ReplayTail {
   truncated: boolean
 }
 
+export interface WorkbenchBrowserTab {
+  id: string
+  url: string
+  title: string
+  sessionId?: string
+}
+
 /** Client -> Server Frames */
 export type WorkbenchClientFrame =
   | { channel: 'workbench'; type: 'hello'; sessionId?: string }
@@ -50,11 +57,14 @@ export type WorkbenchClientFrame =
   | { channel: 'terminal'; type: 'close'; id: string }
   | { channel: 'terminal'; type: 'profiles:save'; profile: TerminalProfile }
   | { channel: 'terminal'; type: 'profiles:delete'; name: string }
+  | { channel: 'browser'; type: 'open'; url: string; title?: string; sessionId?: string }
+  | { channel: 'browser'; type: 'close'; id: string }
+  | { channel: 'browser'; type: 'list'; sessionId?: string }
   | { channel: 'git'; type: 'status'; sessionId?: string; cwd?: string }
 
 /** Server -> Client Frames */
 export type WorkbenchServerFrame =
-  | { channel: 'workbench'; type: 'hello'; terminals: TerminalCollaborationView[]; profiles: TerminalProfile[]; sessionId?: string }
+  | { channel: 'workbench'; type: 'hello'; terminals: TerminalCollaborationView[]; profiles: TerminalProfile[]; browserTabs?: WorkbenchBrowserTab[]; sessionId?: string }
   | { channel: 'terminal'; type: 'terminals'; terminals: TerminalCollaborationView[] }
   | { channel: 'terminal'; type: 'attached'; id: string; view: TerminalCollaborationView; replay: ReplayTail }
   | { channel: 'terminal'; type: 'detached'; id: string }
@@ -63,5 +73,8 @@ export type WorkbenchServerFrame =
   | { channel: 'terminal'; type: 'opened'; view: TerminalCollaborationView; motd: string }
   | { channel: 'terminal'; type: 'closed'; id: string; outcome: 'closed' | 'already-closing' }
   | { channel: 'terminal'; type: 'profiles'; profiles: TerminalProfile[] }
+  | { channel: 'browser'; type: 'tabs'; tabs: WorkbenchBrowserTab[] }
+  | { channel: 'browser'; type: 'opened'; tab: WorkbenchBrowserTab }
+  | { channel: 'browser'; type: 'closed'; id: string }
   | { channel: 'git'; type: 'status'; status: unknown }
   | { channel: 'error'; message: string }

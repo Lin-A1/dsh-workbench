@@ -1,19 +1,20 @@
 /**
- * Collaborative Workbench Sidebar Component.
- * Embedded inside the right-hand details column next to the conversation.
+ * Collaborative Workspace Studio Component.
+ * High-fidelity side-by-side workspace panel: In-App Browser preview,
+ * multi-tab terminal, Git management, and live activity streams.
+ * Matches modern AI IDE workbench UX standards with zero emoji.
  * @module dsh-workbench/client/WorkbenchSidebar
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ActivityEntry, TerminalCollaborationView } from '../types.ts'
-import type { TerminalProfile } from '../protocol.ts'
+import type { TerminalProfile, WorkbenchBrowserTab } from '../protocol.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
+import { BrowserView } from './browser/BrowserView.tsx'
 import { closeSidebarColumn } from './column.ts'
-import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, TerminalIcon } from './icons.tsx'
+import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, MaximizeIcon, PlusIcon, TerminalIcon } from './icons.tsx'
 import { TerminalView } from './terminal/TerminalView.tsx'
 import { workbenchClient } from './ws.ts'
-
-export type WorkbenchTab = 'terminal' | 'git' | 'browser' | 'activity'
 
 export interface WorkbenchSidebarProps {
   sessionId?: string
@@ -21,12 +22,14 @@ export interface WorkbenchSidebarProps {
 }
 
 export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarProps): JSX.Element {
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>('terminal')
+  const [activeTabId, setActiveTabId] = useState<string>('terminal')
   const [terminals, setTerminals] = useState<TerminalCollaborationView[]>([])
   const [profiles, setProfiles] = useState<TerminalProfile[]>([])
+  const [browserTabs, setBrowserTabs] = useState<WorkbenchBrowserTab[]>([])
   const [connected, setConnected] = useState(false)
   const [globalError, setGlobalError] = useState<string | undefined>(undefined)
   const [activityVersion, setActivityVersion] = useState(0)
+  const [isMaximized, setIsMaximized] = useState(false)
 
   const activityLog = useRef(new Map<string, ActivityEntry[]>())
 
@@ -40,6 +43,21 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
           if (frame.type === 'hello') {
             setTerminals(frame.terminals)
             setProfiles(frame.profiles)
+            if (frame.browserTabs) setBrowserTabs(frame.browserTabs)
+          }
+          break
+        }
+        case 'browser': {
+          if (frame.type === 'tabs') {
+            setBrowserTabs(frame.tabs)
+          }
+          else if (frame.type === 'opened') {
+            setBrowserTabs(prev => [...prev.filter(t => t.id !== frame.tab.id), frame.tab])
+            setActiveTabId(frame.tab.id)
+          }
+          else if (frame.type === 'closed') {
+            setBrowserTabs(prev => prev.filter(t => t.id !== frame.id))
+            if (activeTabId === frame.id) setActiveTabId('terminal')
           }
           break
         }
@@ -71,7 +89,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
       disposeFrames()
       disposeState()
     }
-  }, [sessionId])
+  }, [sessionId, activeTabId])
 
   const activityFeed = useMemo(() => {
     void activityVersion
@@ -87,57 +105,115 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
     closeSidebarColumn()
   }
 
+  const handleCreateNewTab = () => {
+    // Open a fresh browser tab with a blank/default page
+    workbenchClient.send({
+      channel: 'browser',
+      type: 'open',
+      url: 'http://localhost:3000',
+      title: '新标签页',
+      sessionId,
+    })
+  }
+
+  const activeBrowserTab = useMemo(
+    () => browserTabs.find(t => t.id === activeTabId),
+    [browserTabs, activeTabId],
+  )
+
   return (
-    <div className="wb-sidebar-root">
-      {/* 顶部主导航工具栏 */}
+    <div className={`wb-sidebar-root${isMaximized ? ' maximized' : ''}`}>
+      {/* 顶层现代化多模式标签栏 (Tab Strip) - 对标截图水准 */}
       <div className="wb-sidebar-header">
         <div className="wb-sidebar-tabs">
+          {/* 终端主标签 */}
           <button
             type="button"
-            className={`wb-tab-btn${activeTab === 'terminal' ? ' active' : ''}`}
-            onClick={() => setActiveTab('terminal')}
-            title="终端协同"
+            className={`wb-tab-btn${activeTabId === 'terminal' ? ' active' : ''}`}
+            onClick={() => setActiveTabId('terminal')}
+            title="协同终端"
           >
-            <TerminalIcon size={13} />
+            <TerminalIcon size={12} />
             <span>终端</span>
             {terminals.some(t => t.unreadBytes > 0) ? <span className="wb-badge-dot" /> : null}
           </button>
 
+          {/* 浏览器网页标签列表 (如同截图中的 newhorse, DeskAware v2.1) */}
+          {browserTabs.map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`wb-tab-btn${activeTabId === tab.id ? ' active' : ''}`}
+              onClick={() => setActiveTabId(tab.id)}
+              title={tab.url}
+            >
+              <GlobeIcon size={12} />
+              <span className="wb-tab-title">{tab.title}</span>
+              <span
+                className="wb-tab-close-icon"
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  workbenchClient.send({ channel: 'browser', type: 'close', id: tab.id })
+                }}
+              >
+                <CloseIcon size={10} />
+              </span>
+            </button>
+          ))}
+
+          {/* Git 标签 */}
           <button
             type="button"
-            className={`wb-tab-btn${activeTab === 'git' ? ' active' : ''}`}
-            onClick={() => setActiveTab('git')}
+            className={`wb-tab-btn${activeTabId === 'git' ? ' active' : ''}`}
+            onClick={() => setActiveTabId('git')}
             title="Git 版本管理"
           >
-            <GitBranchIcon size={13} />
+            <GitBranchIcon size={12} />
             <span>Git</span>
           </button>
 
+          {/* 动态流标签 */}
           <button
             type="button"
-            className={`wb-tab-btn${activeTab === 'browser' ? ' active' : ''}`}
-            onClick={() => setActiveTab('browser')}
-            title="共同浏览器"
-          >
-            <GlobeIcon size={13} />
-            <span>浏览器</span>
-          </button>
-
-          <button
-            type="button"
-            className={`wb-tab-btn${activeTab === 'activity' ? ' active' : ''}`}
-            onClick={() => setActiveTab('activity')}
+            className={`wb-tab-btn${activeTabId === 'activity' ? ' active' : ''}`}
+            onClick={() => setActiveTabId('activity')}
             title="协同动态流"
           >
-            <ActivityIcon size={13} />
+            <ActivityIcon size={12} />
             <span>动态</span>
             {activityFeed.length > 0 ? <span className="wb-tab-count">{activityFeed.length}</span> : null}
           </button>
+
+          {/* 新建标签 + 按钮 */}
+          <button
+            type="button"
+            className="wb-tab-btn wb-tab-add"
+            onClick={handleCreateNewTab}
+            title="新建浏览器网页标签"
+          >
+            <PlusIcon size={13} />
+          </button>
         </div>
 
+        {/* 窗口级别操作按钮 */}
         <div className="wb-header-actions">
-          <span className={`wb-dot ${connected ? 'ok' : 'dead'}`} title={connected ? '网关已连接' : '网关离线重连中'} />
-          <button type="button" className="wb-close-btn" onClick={handleClose} title="收起工作台侧栏">
+          <span className={`wb-dot ${connected ? 'ok' : 'dead'}`} title={connected ? '协同网关已连接' : '网关离线重连中'} />
+          <button
+            type="button"
+            className="wb-action-icon-btn"
+            onClick={() => setIsMaximized(!isMaximized)}
+            title={isMaximized ? '恢复分屏宽度' : '全宽展开工作台'}
+          >
+            <MaximizeIcon size={13} />
+          </button>
+          <button
+            type="button"
+            className="wb-action-icon-btn"
+            onClick={handleClose}
+            title="收起工作台侧栏"
+          >
             <CloseIcon size={14} />
           </button>
         </div>
@@ -150,9 +226,9 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
         </div>
       ) : null}
 
-      {/* 视图主体 */}
+      {/* 视口区域 */}
       <div className="wb-sidebar-body">
-        {activeTab === 'terminal' && (
+        {activeTabId === 'terminal' && (
           <TerminalView
             terminals={terminals}
             profiles={profiles}
@@ -161,7 +237,16 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
           />
         )}
 
-        {activeTab === 'git' && (
+        {activeBrowserTab && (
+          <BrowserView
+            tab={activeBrowserTab}
+            onNavigate={(newUrl) => {
+              setBrowserTabs(prev => prev.map(t => t.id === activeBrowserTab.id ? { ...t, url: newUrl } : t))
+            }}
+          />
+        )}
+
+        {activeTabId === 'git' && (
           <div className="wb-feature-card">
             <div className="wb-card-inner">
               <div className="wb-icon-circle">
@@ -179,24 +264,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
           </div>
         )}
 
-        {activeTab === 'browser' && (
-          <div className="wb-feature-card">
-            <div className="wb-card-inner">
-              <div className="wb-icon-circle">
-                <GlobeIcon size={24} />
-              </div>
-              <h4>共同浏览器 (Phase 3)</h4>
-              <p>即将上线：受控浏览器实时视口、人机同步浏览与 DOM 交互接管。</p>
-              <div className="wb-feature-tags">
-                <code>live view</code>
-                <code>devtools</code>
-                <code>screencast</code>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'activity' && (
+        {activeTabId === 'activity' && (
           <div className="wb-activity-container">
             <ActivityFeed feed={activityFeed} terminals={terminals} />
           </div>
