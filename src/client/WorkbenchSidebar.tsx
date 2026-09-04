@@ -11,7 +11,7 @@ import type { WorkbenchBrowserTab } from '../protocol.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
 import { BrowserView } from './browser/BrowserView.tsx'
 import { closeSidebarColumn, initResizeHandle, toggleMaximize } from './column.ts'
-import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, MaximizeIcon, PlusIcon, TerminalIcon } from './icons.tsx'
+import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, MaximizeIcon, PlusIcon, ServerIcon, TerminalIcon } from './icons.tsx'
 import { TerminalView } from './terminal/TerminalView.tsx'
 import { workbenchClient } from './ws.ts'
 
@@ -154,7 +154,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
     workbenchClient.send({
       channel: 'browser',
       type: 'open',
-      url: 'http://localhost:3000',
+      url: 'about:blank',
       title: '新标签页',
       sessionId,
     })
@@ -182,8 +182,12 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
       {/* 分屏宽度拖拽手柄（双击恢复 48vw 默认半屏） */}
       <div className="wb-resize-handle" ref={resizeHandleRef} title="拖拽调整分栏宽度 · 双击复位" />
 
-      {/* 统一的一级标签栏：终端 / 网页 / Git / 动态 平级铺开 */}
+      {/* 统一的一级标签栏：品牌区 + 终端 / 网页 / Git / 动态 平级铺开 */}
       <div className="wb-sidebar-header">
+        <div className="wb-brand">
+          <span className="wb-brand-mark"><TerminalIcon size={12} /></span>
+          <span className="wb-brand-name">工作台</span>
+        </div>
         <div className="wb-unified-tabstrip">
           {terminals.map(t => (
             <button
@@ -195,7 +199,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             >
               <TerminalIcon size={12} className="wb-tab-icon" />
               <span className="wb-tab-label">{t.name ?? '本地终端'}</span>
-              {t.unreadBytes > 0 ? <span className="wb-unread-dot" /> : null}
+              {t.unreadBytes > 0 && activeTabId !== t.terminalId ? <span className="wb-unread-dot" /> : null}
               {terminals.length > 1 ? (
                 <span
                   className="wb-tab-close-btn"
@@ -408,6 +412,66 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             <ActivityFeed feed={activityFeed} terminals={terminals} />
           </div>
         )}
+      </div>
+
+      {/* 底部状态栏：随激活标签自适应，右侧常驻协同同步状态 */}
+      <div className="wb-status-bar">
+        <div className="wb-status-left">
+          {activeTerminal ? (
+            <>
+              <span className={`wb-status-dot ${activeTerminal.status.kind === 'running' ? 'ok' : 'exited'}`} />
+              <span className="wb-status-item wb-status-strong">
+                <span className="wb-status-icon">
+                  {activeTerminal.kind === 'ssh' ? <ServerIcon size={11} /> : <TerminalIcon size={11} />}
+                </span>
+                {activeTerminal.kind === 'ssh' ? `${activeTerminal.user ?? ''}@${activeTerminal.host ?? ''}` : 'Git Bash'}
+              </span>
+              <span className="wb-status-sep" />
+              <span className="wb-status-path" title={activeTerminal.cwd}>{activeTerminal.cwd || '~'}</span>
+            </>
+          ) : activeBrowser ? (
+            <>
+              <span className="wb-status-item wb-status-strong">
+                <span className="wb-status-icon"><GlobeIcon size={11} /></span>
+                浏览器预览
+              </span>
+              <span className="wb-status-sep" />
+              <span className="wb-status-path" title={activeBrowser.url}>{activeBrowser.url}</span>
+            </>
+          ) : activeTabId === 'git' ? (
+            <>
+              <span className="wb-status-item wb-status-strong">
+                <span className="wb-status-icon"><GitBranchIcon size={11} /></span>
+                Git 协同
+              </span>
+              <span className="wb-status-sep" />
+              <span className="wb-status-path">分支与变更视图 · 预览版</span>
+            </>
+          ) : activeTabId === 'activity' ? (
+            <>
+              <span className="wb-status-item wb-status-strong">
+                <span className="wb-status-icon"><ActivityIcon size={11} /></span>
+                协同动态
+              </span>
+              <span className="wb-status-sep" />
+              <span className="wb-status-path">{activityFeed.length} 条操作记录</span>
+            </>
+          ) : (
+            <span className="wb-status-item">就绪</span>
+          )}
+        </div>
+        <div className="wb-status-right">
+          {activeTerminal ? (
+            <>
+              <span className="wb-status-item wb-status-size">{activeTerminal.cols}×{activeTerminal.rows}</span>
+              <span className="wb-status-sep" />
+            </>
+          ) : null}
+          <span className={`wb-status-item ${connected ? 'wb-status-sync-ok' : 'wb-status-sync-warn'}`}>
+            <span className={`wb-status-dot ${connected ? 'ok' : 'dead'}`} />
+            {connected ? '协同已同步' : '网关重连中'}
+          </span>
+        </div>
       </div>
     </div>
   )

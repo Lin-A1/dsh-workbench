@@ -327,6 +327,7 @@ export class WorkbenchGateway {
   }
 
   private deriveTitle(rawUrl: string): string {
+    if (!rawUrl || rawUrl === 'about:blank') return '新标签页'
     try {
       if (rawUrl.startsWith('file://')) {
         const parts = rawUrl.split(/[\\/]/)

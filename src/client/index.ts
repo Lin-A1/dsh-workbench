@@ -73,7 +73,9 @@ body.wb-sidebar-opened [data-side='details'] {
   height: 100%;
   min-height: 0;
   position: relative;
-  background: var(--wb-bg-1);
+  background:
+    radial-gradient(120% 55% at 50% -12%, rgba(96, 130, 255, 0.09), transparent 62%),
+    var(--wb-bg-1);
   color: var(--wb-text-2);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
   font-size: 12px;
@@ -116,53 +118,103 @@ body.wb-sidebar-opened .wb-sidebar-root {
 .wb-resize-handle {
   position: absolute;
   top: 0;
-  left: -3px;
-  width: 7px;
+  left: -4px;
+  width: 9px;
   height: 100%;
   cursor: col-resize;
   z-index: 60;
   background: transparent;
   touch-action: none;
 }
-.wb-resize-handle::after {
+.wb-resize-handle::before {
   content: '';
   position: absolute;
   top: 0;
-  left: 2px;
+  bottom: 0;
+  left: 3px;
   width: 2px;
-  height: 100%;
   background: transparent;
   transition: background 0.15s ease;
 }
+/* Center grip pill: the affordance that says "drag me" */
+.wb-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  width: 5px;
+  height: 40px;
+  transform: translateY(-50%);
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.wb-resize-handle:hover::before,
+body.wb-resizing .wb-resize-handle::before {
+  background: linear-gradient(180deg, transparent, rgba(91, 147, 255, 0.8) 18%, rgba(91, 147, 255, 0.8) 82%, transparent);
+}
 .wb-resize-handle:hover::after,
 body.wb-resizing .wb-resize-handle::after {
-  background: linear-gradient(180deg, transparent, rgba(91, 147, 255, 0.75) 20%, rgba(91, 147, 255, 0.75) 80%, transparent);
+  opacity: 1;
+  background: rgba(91, 147, 255, 0.28);
+  border-color: rgba(91, 147, 255, 0.4);
 }
 body.wb-resizing { cursor: col-resize; user-select: none; }
 
-/* ---- Header: unified tab strip + window actions -------------------------*/
+/* ---- Header: brand + unified tab strip + window actions -----------------*/
 .wb-sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 42px;
-  min-height: 42px;
-  background: var(--wb-bg-2);
+  height: 44px;
+  min-height: 44px;
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.045), transparent 120%), var(--wb-bg-2);
   border-bottom: 1px solid var(--wb-line);
-  padding: 0 8px 0 8px;
+  padding: 0 8px 0 10px;
   flex: none;
   gap: 8px;
+}
+
+/* Brand cluster: gradient mark + wordmark, the panel's identity anchor */
+.wb-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding-right: 10px;
+  border-right: 1px solid var(--wb-line);
+  margin-right: 4px;
+  user-select: none;
+}
+.wb-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #4f8cff, #7c5cff);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 6px rgba(79, 100, 255, 0.35);
+}
+.wb-brand-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wb-text-1);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .wb-unified-tabstrip {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   flex: 1;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 5px 0;
+  padding: 6px 0;
 }
 .wb-unified-tabstrip::-webkit-scrollbar { display: none; }
 
@@ -174,7 +226,7 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   padding: 0 8px 0 9px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   color: var(--wb-text-3);
   font-size: 12px;
   font-weight: 500;
@@ -193,14 +245,16 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   background: var(--wb-bg-4);
   border-color: var(--wb-line-strong);
   color: var(--wb-text-1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 1px 3px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 3px rgba(0, 0, 0, 0.35);
 }
-.wb-tab-icon { flex: none; opacity: 0.85; }
+.wb-tab-icon { flex: none; opacity: 0.8; }
+/* Per-type icon tint, always on — gives the strip its color rhythm */
+.wb-tab-term .wb-tab-icon { color: #4ecfa2; }
+.wb-tab-web .wb-tab-icon { color: #6ea3ff; }
+.wb-tab-git .wb-tab-icon { color: #e2b34d; }
+.wb-tab-activity .wb-tab-icon { color: #c9a0ff; }
+.wb-unified-tab:not(.active) .wb-tab-icon { opacity: 0.62; }
 .wb-unified-tab.active .wb-tab-icon { opacity: 1; }
-.wb-tab-term.active .wb-tab-icon { color: var(--wb-green); }
-.wb-tab-web.active .wb-tab-icon { color: var(--wb-accent); }
-.wb-tab-git.active .wb-tab-icon { color: var(--wb-amber); }
-.wb-tab-activity.active .wb-tab-icon { color: #d2a8ff; }
 
 .wb-tab-label {
   max-width: 140px;
@@ -358,6 +412,57 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 }
 .wb-icon-btn:active { transform: scale(0.94); }
 
+/* ---- Status bar (VS Code-style bottom strip) -----------------------------*/
+.wb-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 27px;
+  min-height: 27px;
+  padding: 0 12px;
+  background: var(--wb-bg-2);
+  border-top: 1px solid var(--wb-line);
+  font-size: 11px;
+  color: var(--wb-text-3);
+  flex: none;
+  user-select: none;
+}
+.wb-status-left, .wb-status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wb-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.wb-status-item .wb-status-icon { display: inline-flex; color: var(--wb-text-3); }
+.wb-status-strong { color: var(--wb-text-2); font-weight: 500; }
+.wb-status-path {
+  font-family: var(--wb-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.wb-status-size { font-family: var(--wb-font-mono); font-variant-numeric: tabular-nums; }
+.wb-status-sep { width: 1px; height: 12px; background: var(--wb-line-strong); flex: none; }
+.wb-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.wb-status-dot.ok { background: var(--wb-green); box-shadow: 0 0 0 2.5px rgba(63, 206, 142, 0.14); }
+.wb-status-dot.dead { background: var(--wb-amber); box-shadow: 0 0 0 2.5px rgba(224, 179, 77, 0.14); animation: wb-pulse 1.6s ease-in-out infinite; }
+.wb-status-dot.exited { background: var(--wb-red); box-shadow: 0 0 0 2.5px rgba(244, 112, 103, 0.14); }
+.wb-status-sync-ok { color: #52d6a0; }
+.wb-status-sync-warn { color: var(--wb-amber); }
+
 .wb-alert-banner {
   display: flex;
   align-items: center;
@@ -418,24 +523,29 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 .wb-browser-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 7px 10px;
   background: var(--wb-bg-2);
   border-bottom: 1px solid var(--wb-line);
   flex: none;
 }
+/* Segmented nav / action groups with hairline dividers */
 .wb-browser-nav-btns, .wb-browser-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex: none;
+  background: rgba(148, 163, 184, 0.05);
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  padding: 1px;
 }
 .wb-tool-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 27px;
+  height: 26px;
   border: none;
   background: transparent;
   color: var(--wb-text-3);
@@ -454,11 +564,11 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
+  height: 31px;
   background: var(--wb-bg-0);
   border: 1px solid var(--wb-line);
   border-radius: var(--wb-radius);
-  padding: 0 10px;
+  padding: 0 11px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   min-width: 0;
 }
@@ -466,7 +576,7 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   border-color: rgba(91, 147, 255, 0.55);
   box-shadow: 0 0 0 3px var(--wb-accent-soft);
 }
-.wb-omnibox-icon { color: var(--wb-text-3); flex: none; display: inline-flex; }
+.wb-omnibox-icon { color: var(--wb-green); flex: none; display: inline-flex; }
 .wb-omnibox-input {
   flex: 1;
   background: transparent;
@@ -513,6 +623,69 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   border: none;
   background: #0d1117;
   display: block;
+}
+
+/* Start page: replaces the iframe until a URL is committed (no dead white) */
+.wb-start-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  background:
+    radial-gradient(70% 45% at 50% 8%, rgba(91, 147, 255, 0.07), transparent 70%),
+    #0d1117;
+}
+.wb-start-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(79, 140, 255, 0.16), rgba(124, 92, 255, 0.16));
+  border: 1px solid rgba(110, 163, 255, 0.25);
+  color: #6ea3ff;
+  margin-bottom: 16px;
+}
+.wb-start-title {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--wb-text-1);
+}
+.wb-start-hint {
+  margin: 0 0 22px 0;
+  font-size: 12px;
+  color: var(--wb-text-3);
+}
+.wb-start-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.wb-start-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 13px;
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid var(--wb-line-strong);
+  border-radius: 999px;
+  color: var(--wb-text-2);
+  font-size: 12px;
+  font-family: var(--wb-font-mono);
+  cursor: pointer;
+  transition: background 0.13s ease, border-color 0.13s ease, color 0.13s ease;
+}
+.wb-start-chip:hover {
+  background: rgba(91, 147, 255, 0.12);
+  border-color: rgba(91, 147, 255, 0.4);
+  color: #9dbdff;
 }
 
 /* ---- Placeholder card (Git, phase 2) --------------------------------------*/

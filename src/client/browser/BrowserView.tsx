@@ -29,12 +29,20 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
   const [copied, setCopied] = useState(false)
   const [loading, setLoading] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  const isStartPage = !tab.url || tab.url === 'about:blank'
 
   useEffect(() => {
     setInputUrl(tab.url)
     setCurrentUrl(tab.url)
-    setLoading(true)
-  }, [tab.id, tab.url])
+    setLoading(!isStartPage)
+  }, [tab.id, tab.url, isStartPage])
+
+  // The start page invites typing: park the caret in the omnibox
+  useEffect(() => {
+    if (isStartPage) inputRef.current?.focus()
+  }, [isStartPage])
 
   const handleCommitUrl = () => {
     let target = inputUrl.trim()
@@ -73,6 +81,13 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
 
   const handleOpenExternal = () => {
     window.open(resolveFrameUrl(currentUrl), '_blank', 'noopener,noreferrer')
+  }
+
+  const handleQuickLaunch = (url: string) => {
+    setInputUrl(url)
+    setCurrentUrl(url)
+    onNavigate?.(url)
+    setLoading(true)
   }
 
   return (
@@ -114,6 +129,7 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
         <div className="wb-browser-omnibox">
           <GlobeIcon size={13} className="wb-omnibox-icon" />
           <input
+            ref={inputRef}
             type="text"
             className="wb-omnibox-input"
             value={inputUrl}
@@ -146,20 +162,42 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
         </div>
       </div>
 
-      {/* 加载进度条 */}
-      {loading ? <div className="wb-browser-progress" /> : null}
+      {/* 起始页：不加载 iframe，杜绝死链白屏 */}
+      {isStartPage ? (
+        <div className="wb-start-page">
+          <div className="wb-start-mark"><GlobeIcon size={26} /></div>
+          <h4 className="wb-start-title">协同浏览器</h4>
+          <p className="wb-start-hint">在上方地址栏输入网址或本地文件路径，人机共用同一视图</p>
+          <div className="wb-start-chips">
+            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://127.0.0.1:3080')}>
+              Harness 控制台
+            </button>
+            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:3000')}>
+              localhost:3000
+            </button>
+            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:5173')}>
+              localhost:5173
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* 加载进度条 */}
+          {loading ? <div className="wb-browser-progress" /> : null}
 
-      {/* 主视口 iframe */}
-      <div className="wb-browser-viewport">
-        <iframe
-          ref={iframeRef}
-          src={resolveFrameUrl(currentUrl)}
-          className="wb-browser-iframe"
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
-          onLoad={() => setLoading(false)}
-          title={tab.title}
-        />
-      </div>
+          {/* 主视口 iframe */}
+          <div className="wb-browser-viewport">
+            <iframe
+              ref={iframeRef}
+              src={resolveFrameUrl(currentUrl)}
+              className="wb-browser-iframe"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+              onLoad={() => setLoading(false)}
+              title={tab.title}
+            />
+          </div>
+        </>
+      )}
     </div>
   )
 }
