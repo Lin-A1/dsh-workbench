@@ -268,6 +268,11 @@ export class WorkbenchTerminalSession {
       const mark = this.pos
       let token: string | undefined
       this.noteInput('model', req.data)
+      // Broadcast visible command echo to human terminal subscribers
+      const broadcastEcho = `\r\n\x1b[38;5;75m[AI] $\x1b[0m \x1b[1m${req.data.trim()}\x1b[0m\r\n`
+      this.displayBuf += broadcastEcho
+      for (const subscriber of this.outputSubscribers) subscriber(broadcastEcho)
+
       if (req.submit) {
         token = createDoneToken(this.id, ++this.seq)
         this.shell.write(`${req.data}\nprintf '${token}:%s\\n' "$?"\n`)

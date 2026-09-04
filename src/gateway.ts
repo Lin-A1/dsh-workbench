@@ -141,6 +141,23 @@ export class WorkbenchGateway {
           this.send(ws, { channel: 'terminal', type: 'terminals', terminals: this.options.terminalManager.collaborationViews(sessionId) })
           return
         }
+        case 'ensure': {
+          const sessionId = frame.sessionId ?? this.socketSessions.get(ws)
+          const current = this.options.terminalManager.collaborationViews(sessionId)
+          if (current.length === 0) {
+            await this.openTerminal(ws, {
+              kind: 'local',
+              name: '本地终端',
+              sessionId,
+              cwd: frame.cwd,
+              echo: true,
+            })
+          }
+          else {
+            this.send(ws, { channel: 'terminal', type: 'terminals', terminals: current })
+          }
+          return
+        }
         case 'attach': {
           await this.attachTerminal(ws, frame.id)
           return

@@ -73,10 +73,9 @@ export class WorkbenchClient {
     ws.onopen = () => {
       this.retry = 0
       this.setConnected(true)
+      // Request fresh snapshot on reconnect; do not blindly attach stale IDs from prior processes
+      this.attachedTerminals.clear()
       ws.send(JSON.stringify({ channel: 'workbench', type: 'hello', sessionId: this.currentSessionId } satisfies WorkbenchClientFrame))
-      for (const id of this.attachedTerminals) {
-        ws.send(JSON.stringify({ channel: 'terminal', type: 'attach', id } satisfies WorkbenchClientFrame))
-      }
     }
 
     ws.onmessage = (event) => {

@@ -41,6 +41,7 @@ export interface ReplayTail {
 export type WorkbenchClientFrame =
   | { channel: 'workbench'; type: 'hello'; sessionId?: string }
   | { channel: 'terminal'; type: 'list'; sessionId?: string }
+  | { channel: 'terminal'; type: 'ensure'; sessionId?: string; cwd?: string }
   | { channel: 'terminal'; type: 'open'; request: TerminalOpenRequest }
   | { channel: 'terminal'; type: 'attach'; id: string }
   | { channel: 'terminal'; type: 'detach'; id: string }

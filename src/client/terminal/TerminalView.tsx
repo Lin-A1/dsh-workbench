@@ -1,6 +1,6 @@
 /**
- * Collaborative terminal component for the workbench view.
- * Multi-tab support for local shell & SSH, with live activity attribution.
+ * High-performance collaborative terminal view for the workbench sidebar.
+ * Instant local shell readiness, clean SVG icons, auto-focus, zero emoji.
  * @module dsh-workbench/client/terminal/TerminalView
  */
 
@@ -9,6 +9,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TerminalCollaborationView, TerminalKind } from '../../types.ts'
 import type { TerminalOpenRequest, TerminalProfile } from '../../protocol.ts'
+import { CloseIcon, FolderIcon, PlusIcon, ServerIcon } from '../icons.tsx'
 import { workbenchClient } from '../ws.ts'
 
 export interface TerminalViewProps {
@@ -31,13 +32,22 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
   const pendingMotd = useRef(new Map<string, string>())
   const terms = useRef(new Map<string, TermHandle>())
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const ensuredRef = useRef(false)
 
-  // Auto-select first terminal if current selection is invalid
+  // Auto-ensure a local terminal exists when none present
+  useEffect(() => {
+    if (!ensuredRef.current && terminals.length === 0) {
+      ensuredRef.current = true
+      workbenchClient.send({ channel: 'terminal', type: 'ensure', sessionId })
+    }
+  }, [sessionId, terminals.length])
+
+  // Select first terminal if needed
   useEffect(() => {
     if (terminals.length > 0 && (!activeId || !terminals.some(t => t.terminalId === activeId))) {
       setActiveId(terminals[0].terminalId)
     }
-    else if (terminals.length === 0) {
+    else if (terminals.length === 0 && !ensuredRef.current) {
       setActiveId(undefined)
     }
   }, [terminals, activeId])
@@ -66,6 +76,7 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
           else if (motd !== undefined) {
             handle.term.write(`${motd}\r\n`)
           }
+          handle.term.focus()
           break
         }
         case 'output': {
@@ -80,12 +91,14 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
         }
       }
     })
+
     const disposeErrors = workbenchClient.onFrame((frame) => {
       if (frame.channel === 'error') {
         setFormError(frame.message)
         onError?.(frame.message)
       }
     })
+
     return () => {
       dispose()
       disposeErrors()
@@ -95,20 +108,21 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
   // Mount/update xterm viewport
   useEffect(() => {
     const host = hostRef.current
-    if (!activeId || !host) return
+    if (!activeId || !host || formOpen) return
 
     let handle = terms.current.get(activeId)
     if (!handle) {
       const term = new Terminal({
-        fontSize: 13,
-        fontFamily: 'Consolas, "Fira Code", "Courier New", monospace',
+        fontSize: 12,
+        fontFamily: 'Consolas, Menlo, Monaco, "Courier New", monospace',
         cursorBlink: true,
+        cursorStyle: 'block',
         scrollback: 5000,
         theme: {
-          background: '#0d1117',
+          background: '#090d13',
           foreground: '#c9d1d9',
           cursor: '#58a6ff',
-          selectionBackground: 'rgba(56, 139, 253, 0.4)',
+          selectionBackground: 'rgba(56, 139, 253, 0.35)',
         },
       })
       const fit = new FitAddon()
@@ -117,7 +131,7 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
       term.onData(data => workbenchClient.send({ channel: 'terminal', type: 'input', id: activeId, data }))
 
       const observer = new ResizeObserver(() => {
-        try { fit.fit() } catch { /* zero size guard */ }
+        try { fit.fit() } catch { /* ignore */ }
         const { rows, cols } = term
         if (rows > 1 && cols > 1) {
           workbenchClient.send({ channel: 'terminal', type: 'resize', id: activeId, rows, cols })
@@ -129,13 +143,19 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
     }
 
     host.appendChild(handle.term.element ?? document.createElement('div'))
-    try { handle.fit.fit() } catch { /* zero size guard */ }
+    try {
+      handle.fit.fit()
+      handle.term.focus()
+    }
+    catch {
+      /* ignore */
+    }
     workbenchClient.send({ channel: 'terminal', type: 'attach', id: activeId })
 
     return () => {
       handle?.term.element?.remove()
     }
-  }, [activeId])
+  }, [activeId, formOpen])
 
   const activeTerminal = useMemo(
     () => terminals.find(t => t.terminalId === activeId),
@@ -144,62 +164,57 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
 
   return (
     <div className="wb-term-root">
+      {/* 终端子标签导航栏 */}
       <div className="wb-term-subtabs">
-        {terminals.map(t => (
-          <button
-            key={t.terminalId}
-            type="button"
-            className={`wb-subtab${t.terminalId === activeId && !formOpen ? ' active' : ''}`}
-            onClick={() => {
-              setFormOpen(false)
-              setActiveId(t.terminalId)
-            }}
-            title={t.kind === 'ssh' ? `${t.user}@${t.host}:${t.port}` : `Local Shell (${t.cwd || 'default'})`}
-          >
-            <span className={`wb-dot ${t.status.kind === 'running' ? 'ok' : 'dead'}`} />
-            <span>{t.name ?? (t.kind === 'ssh' ? `${t.user}@${t.host}` : '本地终端')}</span>
-            {t.unreadBytes > 0 ? <span className="wb-unread">•</span> : null}
-            <span
-              className="wb-subtab-close"
-              role="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.stopPropagation()
-                workbenchClient.send({ channel: 'terminal', type: 'close', id: t.terminalId })
+        <div className="wb-term-tabs-scroll">
+          {terminals.map(t => (
+            <button
+              key={t.terminalId}
+              type="button"
+              className={`wb-subtab${t.terminalId === activeId && !formOpen ? ' active' : ''}`}
+              onClick={() => {
+                setFormOpen(false)
+                setActiveId(t.terminalId)
               }}
+              title={t.kind === 'ssh' ? `${t.user}@${t.host}:${t.port}` : `本地 Shell (${t.cwd || '当前目录'})`}
             >
-              ×
-            </span>
-          </button>
-        ))}
+              <span className={`wb-dot ${t.status.kind === 'running' ? 'ok' : 'dead'}`} />
+              {t.kind === 'ssh' ? <ServerIcon size={12} /> : <FolderIcon size={12} />}
+              <span className="wb-subtab-title">{t.name ?? (t.kind === 'ssh' ? `${t.user}@${t.host}` : '本地终端')}</span>
+              {t.unreadBytes > 0 ? <span className="wb-unread-pill">{t.unreadBytes}B</span> : null}
+              <span
+                className="wb-subtab-close"
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  workbenchClient.send({ channel: 'terminal', type: 'close', id: t.terminalId })
+                }}
+              >
+                <CloseIcon size={10} />
+              </span>
+            </button>
+          ))}
+        </div>
 
         <button
           type="button"
-          className={`wb-subtab${formOpen || terminals.length === 0 ? ' active' : ''}`}
-          onClick={() => setFormOpen(true)}
+          className={`wb-subtab-add${formOpen ? ' active' : ''}`}
+          onClick={() => setFormOpen(!formOpen)}
+          title="新建终端或连接 SSH"
         >
-          + 新建终端
+          <PlusIcon size={13} />
         </button>
-
-        <span className="wb-spacer" />
-
-        {activeTerminal ? (
-          <span className="wb-term-info">
-            {activeTerminal.kind === 'ssh'
-              ? `SSH: ${activeTerminal.user}@${activeTerminal.host}:${activeTerminal.port}`
-              : `本地 Shell (${activeTerminal.cwd || '当前目录'})`}
-            {' · '}
-            {activeTerminal.rows}×{activeTerminal.cols}
-          </span>
-        ) : null}
       </div>
 
+      {/* 终端视口或新建表单 */}
       <div className="wb-term-viewport">
-        {formOpen || terminals.length === 0 ? (
+        {formOpen ? (
           <ConnectForm
             profiles={profiles}
             sessionId={sessionId}
             error={formError}
+            onCancel={() => setFormOpen(false)}
             onOpen={(request) => {
               workbenchClient.send({ channel: 'terminal', type: 'open', request: { ...request, sessionId } })
             }}
@@ -211,16 +226,34 @@ export function TerminalView({ terminals, profiles, sessionId, onError }: Termin
           <div className="wb-xterm-host" ref={hostRef} />
         )}
       </div>
+
+      {/* 终端底部元信息 */}
+      {activeTerminal && !formOpen ? (
+        <div className="wb-term-footer">
+          <span className="wb-footer-item">
+            <span className={`wb-dot ${activeTerminal.status.kind === 'running' ? 'ok' : 'dead'}`} />
+            <span>{activeTerminal.status.kind === 'running' ? '运行中' : '已退出'}</span>
+          </span>
+          <span className="wb-footer-spacer" />
+          <span className="wb-footer-item wb-footer-mono">
+            {activeTerminal.rows}×{activeTerminal.cols}
+          </span>
+          <span className="wb-footer-item wb-footer-mono">
+            {activeTerminal.kind === 'ssh' ? `${activeTerminal.user}@${activeTerminal.host}` : (activeTerminal.cwd || '当前目录')}
+          </span>
+        </div>
+      ) : null}
     </div>
   )
 }
 
-function ConnectForm({ profiles, sessionId, error, onOpen, onSaveProfile }: {
+function ConnectForm({ profiles, sessionId, error, onOpen, onSaveProfile, onCancel }: {
   profiles: TerminalProfile[]
   sessionId?: string
   error?: string
   onOpen: (request: TerminalOpenRequest) => void
   onSaveProfile: (profile: TerminalProfile) => void
+  onCancel: () => void
 }): JSX.Element {
   const [kind, setKind] = useState<TerminalKind>('local')
   const [name, setName] = useState('')
@@ -235,13 +268,18 @@ function ConnectForm({ profiles, sessionId, error, onOpen, onSaveProfile }: {
   return (
     <div className="wb-form-container">
       <div className="wb-form-header">
-        <h3>创建协作终端</h3>
-        <p>支持创建当前会话关联的本地终端，或连接远端 SSH 服务器。人机在同一终端操作，AI 实时可见。</p>
+        <div className="wb-form-title-row">
+          <h4>新建协作终端</h4>
+          <button type="button" className="wb-icon-btn" onClick={onCancel}>
+            <CloseIcon size={14} />
+          </button>
+        </div>
+        <p>创建本地 Shell 或 SSH 会话。人和 AI 共享操作同一终端，指令及输出实时双向同步。</p>
       </div>
 
       {profiles.length > 0 ? (
         <div className="wb-form-row">
-          <label>预设档案</label>
+          <label>快速选择</label>
           <select
             value={selectedProfile}
             onChange={(e) => {
@@ -257,44 +295,44 @@ function ConnectForm({ profiles, sessionId, error, onOpen, onSaveProfile }: {
               }
             }}
           >
-            <option value="">选择已保存档案…</option>
+            <option value="">选择已有配置…</option>
             {profiles.map(p => (
-              <option key={p.name} value={p.name}>{p.name} ({p.kind})</option>
+              <option key={p.name} value={p.name}>{p.name} ({p.kind === 'ssh' ? 'SSH' : '本地'})</option>
             ))}
           </select>
         </div>
       ) : null}
 
       <div className="wb-form-row">
-        <label>终端类型</label>
+        <label>目标类型</label>
         <div className="wb-radio-group">
           <label className="wb-radio">
             <input type="radio" checked={kind === 'local'} onChange={() => setKind('local')} />
-            <span>本地 Shell (当前项目工作区)</span>
+            <span>本地 Shell</span>
           </label>
           <label className="wb-radio">
             <input type="radio" checked={kind === 'ssh'} onChange={() => setKind('ssh')} />
-            <span>远程 SSH 会话</span>
+            <span>远程 SSH</span>
           </label>
         </div>
       </div>
 
       <div className="wb-form-grid">
-        <label>终端名称</label>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder={kind === 'local' ? '本地开发终端' : 'deploy-server'} />
+        <label>显示名称</label>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder={kind === 'local' ? '本地终端' : '远程部署机'} />
 
         {kind === 'ssh' ? (
           <>
             <label>远程主机</label>
             <input value={host} onChange={e => setHost(e.target.value)} placeholder="192.168.1.100" />
-            <label>SSH 端口</label>
+            <label>端口号</label>
             <input value={port} onChange={e => setPort(e.target.value)} placeholder="22" />
-            <label>登录用户</label>
+            <label>用户名</label>
             <input value={user} onChange={e => setUser(e.target.value)} placeholder="root" />
             <label>私钥路径</label>
-            <input value={identityFile} onChange={e => setIdentityFile(e.target.value)} placeholder="C:\Users\...\.ssh\id_rsa" />
+            <input value={identityFile} onChange={e => setIdentityFile(e.target.value)} placeholder="C:\Users\...\id_rsa" />
             <label>登录密码</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="留空使用私钥验证" />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="留空使用私钥" />
           </>
         ) : null}
       </div>
@@ -319,12 +357,12 @@ function ConnectForm({ profiles, sessionId, error, onOpen, onSaveProfile }: {
             })
           }}
         >
-          启动终端
+          立即创建
         </button>
 
         <input
           className="wb-input-save"
-          placeholder="另存为档案名…"
+          placeholder="配置档案名…"
           value={saveAs}
           onChange={e => setSaveAs(e.target.value)}
         />
@@ -345,7 +383,7 @@ function ConnectForm({ profiles, sessionId, error, onOpen, onSaveProfile }: {
             setSaveAs('')
           }}
         >
-          保存配置
+          保存
         </button>
       </div>
     </div>

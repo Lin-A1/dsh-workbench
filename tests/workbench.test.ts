@@ -94,7 +94,11 @@ describe('workbench terminal manager & tools', () => {
     expect(opened.kind).toBe('local')
     expect(opened.terminalId).toContain('wb-term-')
 
-    // 2. Send command
+    // 2. Subscribe and verify model-sent command broadcasting (two-way sync)
+    const session = manager.get(opened.terminalId)
+    const chunks: string[] = []
+    session.subscribeOutput(text => chunks.push(text))
+
     const sent = await (sendTool!.execute as Function)({
       terminalId: opened.terminalId,
       data: 'echo test',
@@ -102,6 +106,8 @@ describe('workbench terminal manager & tools', () => {
     }, { signal: new AbortController().signal })
     expect(sent.exitCode).toBe(0)
     expect(sent.waitReason).toBe('command_done')
+    expect(chunks.join('')).toContain('[AI] $')
+    expect(chunks.join('')).toContain('echo test')
 
     // 3. Verify schema conformance of list output
     const listSchema = listTool!.output.schema as { items?: { properties?: Record<string, unknown> } }
