@@ -6,6 +6,7 @@
  */
 
 import type { ActivityEntry, ActivitySource, ReadResult, SendResult, ShellChannel, TerminalCollaborationView, TerminalConnection, TerminalKind, TerminalSnapshot, TerminalStatus } from '../types.ts'
+import { sanitizeTerminalText } from './ansi.ts'
 import { createDoneToken, createReadyToken, createSentinelLineFilter, stripMarkerLines, stripSentinel } from './sentinel.ts'
 
 const encoder = new TextEncoder()
@@ -155,7 +156,7 @@ export class WorkbenchTerminalSession {
         const { text } = this.sliceFrom(mark)
         if (!text.includes(token)) return
         cleanup()
-        resolve(stripMarkerLines(text, token))
+        resolve(sanitizeTerminalText(stripMarkerLines(text, token)))
       }
       const onClose = (): void => {
         cleanup()
@@ -163,7 +164,7 @@ export class WorkbenchTerminalSession {
       }
       const timer = setTimeout(() => {
         cleanup()
-        resolve(stripMarkerLines(this.sliceFrom(mark).text, token))
+        resolve(sanitizeTerminalText(stripMarkerLines(this.sliceFrom(mark).text, token)))
       }, timeoutMs)
       const cleanup = (): void => {
         clearTimeout(timer)
@@ -320,8 +321,14 @@ export class WorkbenchTerminalSession {
       const mark = this.pos
       let token: string | undefined
       this.noteInput('model', req.data)
-      // Broadcast visible command echo to human terminal subscribers
-      const broadcastEcho = `\r\n\x1b[38;5;75m[AI] $\x1b[0m \x1b[1m${req.data.trim()}\x1b[0m\r\n`
+      // Broadcast an [AI] attribution marker to human terminal subscribers.
+      // A real PTY echoes the typed command itself right after the write, so
+      // repeating the command text here showed every model input twice; the
+      // full text is only needed on pipe fallback shells where echo is off.
+      const ptyEchoes = this.shell.echoesInput !== false
+      const broadcastEcho = ptyEchoes
+        ? `\r\n\x1b[38;5;75m[AI]$ \x1b[0m`
+        : `\r\n\x1b[38;5;75m[AI] $\x1b[0m \x1b[1m${req.data.trim()}\x1b[0m\r\n`
       this.displayBuf += broadcastEcho
       for (const subscriber of this.outputSubscribers) subscriber(broadcastEcho)
 
@@ -352,7 +359,10 @@ export class WorkbenchTerminalSession {
           const stripped = stripSentinel(text, req.token)
           if (stripped !== undefined) output = stripped.text
         }
-        resolve({ output, waitReason, exitCode, status: this.status.kind, truncated })
+        // Model-facing transcript is cooked: escapes stripped, TUI redraws
+        // resolved — the raw byte storm from full-screen programs never
+        // reaches the conversation.
+        resolve({ output: sanitizeTerminalText(output), waitReason, exitCode, status: this.status.kind, truncated })
       }
       const onData = (): void => {
         if (req.token !== undefined) {
@@ -400,7 +410,7 @@ export class WorkbenchTerminalSession {
     const begin = Math.max(0, end - Math.max(1, count))
     this.markModelSeen()
     return {
-      text: lines.slice(begin, end).join('\n'),
+      text: sanitizeTerminalText(lines.slice(begin, end).join('\n')),
       totalLines,
       lineBegin: begin,
       lineEnd: end,

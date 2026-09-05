@@ -5,6 +5,8 @@ export class FakeShell implements ShellChannel {
   readonly resizes: { rows: number; cols: number }[] = []
   private dataListeners: ((chunk: string) => void)[] = []
   private closeListeners: (() => void)[] = []
+  /** Optional test hook: react to a write by emitting synthetic output. */
+  onWrite?: (data: string) => void
 
   write(data: string): void {
     this.writes.push(data)
@@ -13,6 +15,7 @@ export class FakeShell implements ShellChannel {
     if (ready !== undefined) this.emit(`welcome\n${ready}\n`)
     if (done !== undefined) this.emit(`command output\n${done}:0\n`)
     if (ready === undefined && done === undefined) this.emit('raw input output\n')
+    this.onWrite?.(data)
   }
 
   close(): void {

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { WorkbenchGateway } from '../src/gateway.ts'
 import { createTools, resolveConfig } from '../src/index.ts'
+import { sanitizeTerminalText, stripAnsiSequences } from '../src/terminal/ansi.ts'
 import type { WorkbenchServerFrame } from '../src/protocol.ts'
 import { JournalStore } from '../src/terminal/journal.ts'
 import { WorkbenchTerminalManager } from '../src/terminal/manager.ts'
@@ -106,8 +107,10 @@ describe('workbench terminal manager & tools', () => {
     }, { signal: new AbortController().signal })
     expect(sent.exitCode).toBe(0)
     expect(sent.waitReason).toBe('command_done')
-    expect(chunks.join('')).toContain('[AI] $')
-    expect(chunks.join('')).toContain('echo test')
+    // Real-PTY path: only the [AI]$ attribution marker broadcasts; the command
+    // text is NOT duplicated (the shell echoes it itself).
+    expect(chunks.join('')).toContain('[AI]$')
+    expect(chunks.join('')).not.toContain('[AI] $ echo test')
 
     // 3. Verify schema conformance of list output
     const listSchema = listTool!.output.schema as { items?: { properties?: Record<string, unknown> } }
@@ -289,6 +292,64 @@ describe('sentinel & filtering', () => {
       { busy: false, actor: undefined },
     ])
 
+    await manager.closeAll()
+  })
+})
+
+describe('ansi sanitizing', () => {
+  it('strips escape sequences and resolves TUI redraws to cooked text', () => {
+    // CSI/OSC/charset escapes vanish
+    expect(stripAnsiSequences('\x1b[2K\r\x1b[1;32mok\x1b[0m\x1b]0;title\x07\x1b(B')).toBe('\rok')
+
+    // carriage-return overwrite: spinner frames collapse; a shorter final
+    // frame leaves the residue a real TTY would still show on screen
+    expect(sanitizeTerminalText('working\rworking.\rworking..\rdone')).toBe('doneing..')
+    expect(sanitizeTerminalText('working\rworking.\rworking..\rcomplete!')).toBe('complete!')
+
+    // overwrite keeps the tail when the new frame is shorter (real TTY semantics)
+    expect(sanitizeTerminalText('100%\r50%')).toBe('50%%')
+
+    // full-screen redraw storm cooks down to readable content
+    const storm = Array.from({ length: 50 }, (_, i) => `\x1b[H\x1b[2Kframe ${i}\x1b[K\n`).join('')
+    const cooked = sanitizeTerminalText(storm)
+    expect(cooked).not.toContain('\x1b')
+    expect(cooked).not.toContain('[K')
+
+    // backspace erasure
+    expect(sanitizeTerminalText('10\b\b\b100%')).toBe('100%')
+
+    // blank-run collapse
+    expect(sanitizeTerminalText('a\n\n\n\n\nb')).toBe('a\n\n\nb')
+  })
+
+  it('sanitizes send output so TUI noise never reaches the model', async () => {
+    const dir = await tempDir()
+    const journal = new JournalStore(dir)
+
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 2,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      connectLocal: async () => {
+        const c = new FakeConnection()
+        // Simulate a TUI program: escape-heavy redraw before the sentinel
+        c.shell.onWrite = (data) => {
+          if (data.includes('tui-cmd')) {
+            c.shell.emit('\x1b[H\x1b[2Kthinking…\x1b[K\r\n\x1b[32m✔ done\x1b[0m\r\n\r\n\r\n')
+          }
+        }
+        return c
+      },
+      onOpen: s => journal.attach(s),
+    })
+
+    const { snapshot } = await manager.open({ kind: 'local', name: 'ansi-test' })
+    const session = manager.get(snapshot.terminalId)
+    const result = await session.send({ data: 'tui-cmd', submit: true, idleMs: 50, timeoutMs: 500 })
+    expect(result.output).not.toContain('\x1b')
+    expect(result.output).toContain('done')
     await manager.closeAll()
   })
 })

@@ -432,7 +432,12 @@ interface SystemPromptFace {
   getSectionOrder?(name: 'TOOL_PTY'): number
 }
 
-const WORKBENCH_PROMPT = 'A collaborative workbench view shares interactive terminals with the human operator. Before acting on a terminal, always call workbench_terminal_list to inspect recentActivity and unreadBytes — the human operator may have run commands, modified files, or started build jobs. Human input is authoritatively recorded under recentActivity.'
+const WORKBENCH_PROMPT = `A collaborative workbench view shares interactive terminals with the human operator. Before acting on a terminal, always call workbench_terminal_list and check each row's busy flag and recentActivity: the human may have run commands, modified files, or started jobs between your turns.
+
+Coordination protocol:
+- busy=true means a model command is still in flight on that terminal. Do NOT send again — a second concurrent send throws. The gateway blocks human keystrokes while your command runs (their Ctrl+C still passes through as an interrupt), so you own the input stream until your send returns.
+- Terminal output you receive (send output, workbench_terminal_read) is sanitized for you: ANSI escapes stripped, TUI redraws and carriage-return overwrites resolved to final text. Full-screen programs (claude, vim, watch) still make poor tool targets — prefer their non-interactive flags (e.g. claude -p) and short commands.
+- The display stream marks your input with an [AI]$ line; human keystrokes are attributed in recentActivity with a "human:" prefix. Treat recentActivity as authoritative for who did what.`
 
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)
