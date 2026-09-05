@@ -190,22 +190,22 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
           <div className="wb-start-mark"><GlobeIcon size={26} /></div>
           <h4 className="wb-start-title">协同浏览器</h4>
           <p className="wb-start-hint">在上方地址栏输入网址或本地文件路径，人机共用同一视图</p>
-          <div className="wb-start-chips">
-            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://127.0.0.1:3080')}>
-              Harness (3080)
-            </button>
-            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:3000')}>
-              localhost:3000
-            </button>
-            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:5173')}>
-              Vite (5173)
-            </button>
-            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:8080')}>
-              localhost:8080
-            </button>
-            <button type="button" className="wb-start-chip" onClick={() => handleQuickLaunch('http://localhost:8000')}>
-              localhost:8000
-            </button>
+          <p className="wb-start-group-label">快速直达 · 本地开发服务</p>
+          <div className="wb-start-grid">
+            {[
+              { label: 'Harness 控制台', port: '3080', url: 'http://127.0.0.1:3080', desc: '本应用' },
+              { label: 'React / CRA', port: '3000', url: 'http://localhost:3000', desc: '前端默认' },
+              { label: 'Vite Dev', port: '5173', url: 'http://localhost:5173', desc: '热更新' },
+              { label: 'Webpack / Java', port: '8080', url: 'http://localhost:8080', desc: '通用服务' },
+              { label: 'Python / FastAPI', port: '8000', url: 'http://localhost:8000', desc: '后端 API' },
+              { label: 'Storybook', port: '6006', url: 'http://localhost:6006', desc: '组件预览' },
+            ].map(item => (
+              <button key={item.port} type="button" className="wb-start-card" onClick={() => handleQuickLaunch(item.url)}>
+                <span className="wb-start-card-port">{item.port}</span>
+                <span className="wb-start-card-label">{item.label}</span>
+                <span className="wb-start-card-desc">{item.desc}</span>
+              </button>
+            ))}
           </div>
         </div>
       ) : (

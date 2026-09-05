@@ -24,6 +24,7 @@ const STORAGE_KEY_WIDTH = 'dsh-workbench-width'
 const OPENED_CLASS = 'wb-sidebar-opened'
 const MAXIMIZED_CLASS = 'wb-maximized'
 const RESIZING_CLASS = 'wb-resizing'
+const CLOSING_CLASS = 'wb-closing'
 
 export function setLayoutFace(face?: LayoutFace): void {
   layoutFace = face
@@ -83,6 +84,7 @@ function invokeFace(method: 'openDetails' | 'closeDetails', attempt = 0): void {
 export function openSidebarColumn(): void {
   if (typeof document === 'undefined') return
   localStorage.setItem(STORAGE_KEY_OPEN, 'true')
+  document.body.classList.remove(CLOSING_CLASS)
   document.body.classList.add(OPENED_CLASS)
   setWidthVar(getEffectiveWidth())
   invokeFace('openDetails')
@@ -91,8 +93,13 @@ export function openSidebarColumn(): void {
 export function closeSidebarColumn(): void {
   if (typeof document === 'undefined') return
   localStorage.setItem(STORAGE_KEY_OPEN, 'false')
+  // Spring the exit: hold the track wide for one frame with the closing
+  // ease, then drop the opened class so the harness grid springs shut.
+  document.body.classList.add(CLOSING_CLASS)
   document.body.classList.remove(OPENED_CLASS, MAXIMIZED_CLASS)
-  document.documentElement.style.removeProperty('--wb-details-w')
+  window.setTimeout(() => {
+    document.body.classList.remove(CLOSING_CLASS)
+  }, 260)
   invokeFace('closeDetails')
 }
 

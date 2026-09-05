@@ -405,10 +405,25 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
         )}
 
         {activeTabId === 'git' && (
-          <div className="wb-empty-feed" style={{ marginTop: 90 }}>
-            <GitBranchIcon size={28} className="wb-empty-icon" />
-            <p className="wb-empty-title">Git 协同面板</p>
-            <p className="wb-hint">更改列表、分支视图与人机协同提交，将在后续版本加入。</p>
+          <div className="wb-git-skeleton" style={{ marginTop: 40 }}>
+            {/* 骨架头部：分支条 + 同步徽章 */}
+            <div className="wb-git-skel-head">
+              <span className="wb-git-skel-branch">
+                <GitBranchIcon size={12} />
+                <span className="wb-git-skel-bar" style={{ width: 76 }} />
+              </span>
+              <span className="wb-git-skel-pill" />
+              <span className="wb-git-skel-pill" />
+            </div>
+            {/* 骨架文件变更行：模拟 porcelain 列表 */}
+            {[64, 92, 48, 78, 56, 84].map((w, i) => (
+              <div className="wb-git-skel-row" key={i} style={{ animationDelay: `${i * 0.12}s` }}>
+                <span className="wb-git-skel-badge" />
+                <span className="wb-git-skel-bar" style={{ width: `${w}%` }} />
+              </div>
+            ))}
+            <p className="wb-empty-title" style={{ marginTop: 28 }}>Git 协同面板</p>
+            <p className="wb-hint">工作区状态树、Diff 查看器与人机协同暂存 / 提交 — 即将到来。</p>
           </div>
         )}
 

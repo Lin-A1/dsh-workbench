@@ -6,7 +6,7 @@
 
 import { createElement } from 'react'
 import xtermCss from '@xterm/xterm/css/xterm.css'
-import { closeSidebarColumn, installAdoption, setLayoutFace } from './column.ts'
+import { closeSidebarColumn, installAdoption, isSidebarOpen, setLayoutFace, toggleMaximize, toggleSidebarColumn } from './column.ts'
 import { HeaderToggleAction } from './HeaderToggleAction.tsx'
 import { workbenchClient } from './ws.ts'
 import { WorkbenchSidebar } from './WorkbenchSidebar.tsx'
@@ -45,12 +45,37 @@ const WORKBENCH_SIDEBAR_CSS = `${xtermCss}
   --wb-font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, "Courier New", monospace;
 }
 
+/* ---- Light theme: harness flips body[data-ds-dark-theme]; mirror the
+   palette onto a GitHub-Light-style neutral axis so the card no longer
+   tears a black hole into a bright app. --------------------------------- */
+body:not([data-ds-dark-theme]) {
+  --wb-page: #f4f5f6;                    /* soft app gray                */
+  --wb-card: #ffffff;                    /* floating card surface        */
+  --wb-inset: #f0f1f3;                   /* terminal / input wells       */
+  --wb-hover: rgba(0, 0, 0, 0.045);
+  --wb-active: rgba(0, 0, 0, 0.08);
+  --wb-line: rgba(0, 0, 0, 0.09);
+  --wb-line-strong: rgba(0, 0, 0, 0.16);
+  --wb-text-1: #1f2328;
+  --wb-text-2: #59636e;
+  --wb-text-3: #8b949e;
+  --wb-green: #1a7f37;
+  --wb-amber: #9a6700;
+  --wb-red: #cf222e;
+}
+
 /* ---- Frame override: the workbench track owns the right half ---------- */
 body.wb-sidebar-opened [class*='frame'] {
   grid-template-columns: 280px minmax(0, 1fr) min(var(--wb-details-w, 48vw), 62vw) !important;
   /* The harness's eased grid transition deadlocks on var()-based targets and
-     pins the track at its start value; width changes here are instant. */
+     pins the track at its start value; width changes here are instant.
+     The dismiss ease-out below re-animates on exit without re-deadlocking
+     the var() target, so close feels sprung while open/resize stay instant. */
   transition: none !important;
+}
+body.wb-sidebar-opened.wb-closing [class*='frame'] {
+  grid-template-columns: 280px minmax(0, 1fr) min(var(--wb-details-w, 48vw), 62vw) !important;
+  transition: grid-template-columns 0.24s cubic-bezier(0.32, 0.72, 0.24, 1) !important;
 }
 body.wb-sidebar-opened.wb-maximized [class*='frame'] {
   grid-template-columns: 280px 0px calc(100vw - 280px) !important;
@@ -229,6 +254,10 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   overflow-x: auto;
   scrollbar-width: none;
   padding: 6px 0;
+  /* Fade-out masks on both edges when tabs overflow horizontally, so
+     cut-off labels dissolve instead of ending in a hard clipped line. */
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-repeat: no-repeat;
 }
 .wb-unified-tabstrip::-webkit-scrollbar { display: none; }
 
@@ -714,6 +743,55 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   color: var(--wb-text-1);
 }
 
+/* ---- Start page card grid: bento-style quick launch --------------------- */
+.wb-start-group-label {
+  margin: 0 0 12px 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--wb-text-3);
+}
+.wb-start-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: min(440px, 92%);
+}
+.wb-start-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--wb-card);
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+.wb-start-card:hover {
+  border-color: var(--wb-line-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+.wb-start-card:active { transform: translateY(0); }
+.wb-start-card-port {
+  font-family: var(--wb-font-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--wb-text-1);
+}
+.wb-start-card-label {
+  font-size: 11px;
+  color: var(--wb-text-2);
+}
+.wb-start-card-desc {
+  font-size: 10px;
+  color: var(--wb-text-3);
+}
+
 /* ---- Activity timeline ------------------------------------------------------*/
 .wb-activity-container {
   flex: 1;
@@ -730,6 +808,78 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 .wb-empty-icon { color: #39404c; margin-bottom: 12px; }
 .wb-empty-title { font-size: 13px; color: var(--wb-text-2); font-weight: 500; margin: 0 0 6px 0; }
 .wb-empty-feed .wb-hint { font-size: 12px; color: var(--wb-text-3); margin: 0 auto; line-height: 1.65; max-width: 300px; }
+
+/* ---- Git panel skeleton: preview of the coming worktree panel -----------*/
+.wb-git-skeleton {
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 20px 22px 24px;
+  background: var(--wb-card);
+  border: 1px solid var(--wb-line);
+  border-radius: 10px;
+  text-align: center;
+}
+.wb-git-skel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.wb-git-skel-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 6px;
+  color: var(--wb-text-3);
+}
+.wb-git-skel-bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--wb-hover) 25%, var(--wb-active) 50%, var(--wb-hover) 75%);
+  background-size: 200% 100%;
+  animation: wb-skel-shimmer 1.6s ease-in-out infinite;
+}
+.wb-git-skel-pill {
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: linear-gradient(90deg, var(--wb-hover) 25%, var(--wb-active) 50%, var(--wb-hover) 75%);
+  background-size: 200% 100%;
+  animation: wb-skel-shimmer 1.6s ease-in-out infinite;
+}
+.wb-git-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--wb-hover);
+  margin-bottom: 6px;
+  text-align: left;
+  opacity: 0;
+  animation: wb-skel-row-in 0.5s ease-out forwards;
+}
+.wb-git-skel-badge {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--wb-hover) 25%, var(--wb-active) 50%, var(--wb-hover) 75%);
+  background-size: 200% 100%;
+  animation: wb-skel-shimmer 1.6s ease-in-out infinite;
+  flex: none;
+}
+@keyframes wb-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes wb-skel-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 .wb-activity-list {
   display: flex;
@@ -923,6 +1073,7 @@ export function apply(ctx: ClientContext): void {
   workbenchClient.start()
   setLayoutFace(ctx.layout)
   installAdoption()
+  installGlobalShortcuts()
 
   // 1. Details column registration (Session-attached right sidebar workspace)
   try {
@@ -947,6 +1098,40 @@ export function apply(ctx: ClientContext): void {
   catch (err) {
     console.warn(`[dsh-workbench] header utility error: ${err instanceof Error ? err.message : String(err)}`)
   }
+}
+
+/**
+ * Global keyboard shortcuts so keyboard-first operators never reach for the
+ * mouse: Ctrl+\ (or Cmd+J on macOS) toggles the workbench panel, and
+ * Ctrl+Shift+M (Cmd+Ctrl+M) maximizes/restores it. Skips keystrokes aimed at
+ * text inputs so typing in the chat or terminal never triggers a toggle.
+ */
+function installGlobalShortcuts(): void {
+  if (typeof window === 'undefined') return
+  const onKey = (e: KeyboardEvent): void => {
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '')
+    const mod = isMac ? e.metaKey : e.ctrlKey
+    if (!mod || e.altKey) return
+
+    // Ctrl+\ toggles the panel (VS Code terminal toggle convention)
+    if (e.key === '\\') {
+      e.preventDefault()
+      toggleSidebarColumn()
+      return
+    }
+    // Cmd+J is the mac-native panel toggle
+    if (isMac && e.key.toLowerCase() === 'j' && !e.shiftKey) {
+      e.preventDefault()
+      toggleSidebarColumn()
+      return
+    }
+    // Ctrl+Shift+M maximizes / restores
+    if (e.shiftKey && e.key.toUpperCase() === 'M' && isSidebarOpen()) {
+      e.preventDefault()
+      toggleMaximize()
+    }
+  }
+  window.addEventListener('keydown', onKey)
 }
 
 function SidebarWrapper(props: { closeDetails?: () => void; sessionId?: string }): JSX.Element {
