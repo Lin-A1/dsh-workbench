@@ -215,18 +215,20 @@ export class WorkbenchGateway {
       let upstream = await fetch(parsed, { redirect: 'follow', signal: controller.signal, headers: fetchHeaders })
       let contentType = upstream.headers.get('content-type') ?? ''
       let html: string | undefined
-      for (let hop = 0; hop < 2; hop++) {
-        if (!contentType.includes('text/html') && !contentType.includes('xhtml')) break
+      const readHtml = async (): Promise<string> => {
         const buf = await upstream.arrayBuffer()
         if (buf.byteLength > 8 * 1024 * 1024) throw new Error('page exceeds 8 MB reader cap')
         const charset = charsetFromContentType(contentType)
-        let decoded: string
         try {
-          decoded = new TextDecoder(charset, { fatal: false }).decode(buf)
+          return new TextDecoder(charset, { fatal: false }).decode(buf)
         }
         catch {
-          decoded = new TextDecoder('utf-8', { fatal: false }).decode(buf)
+          return new TextDecoder('utf-8', { fatal: false }).decode(buf)
         }
+      }
+      for (let hop = 0; hop < 2 && html === undefined; hop++) {
+        if (!contentType.includes('text/html') && !contentType.includes('xhtml')) break
+        const decoded = await readHtml()
         const next = extractRedirectTarget(decoded, upstream.url || current)
         if (!next) {
           html = decoded
@@ -235,6 +237,10 @@ export class WorkbenchGateway {
         current = next
         upstream = await fetch(next, { redirect: 'follow', signal: controller.signal, headers: fetchHeaders })
         contentType = upstream.headers.get('content-type') ?? ''
+      }
+      // Redirect budget exhausted on an HTML page: serve what we landed on.
+      if (html === undefined && (contentType.includes('text/html') || contentType.includes('xhtml'))) {
+        html = await readHtml()
       }
       const finalUrl = upstream.url || current
       if (html === undefined) {
