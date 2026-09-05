@@ -377,9 +377,9 @@ export function createTools(
 
     defineTool({
       name: 'workbench_browser_open',
-      description: 'Open a web page or local HTML file in the collaborative workbench browser panel. The human operator will see the page rendered live on the right-hand workbench view. Supports localhost URLs (e.g. "http://localhost:3000") and local HTML files (e.g. "D:/docs/page.html").',
+      description: 'Open a page in the shared workbench browser — the human sees it rendered live in the right-hand panel (the panel auto-reveals). Local files and localhost URLs render fully interactive; external http(s) sites are served through a built-in reader proxy (scripts stripped, links keep working inside the panel), so pages like baidu.com display fine despite X-Frame-Options.',
       parameters: {
-        url: { type: 'string', required: true, description: 'The URL or local file path to open in the workbench browser.' },
+        url: { type: 'string', required: true, description: 'The URL or local file path to open. External sites go through the reader proxy automatically.' },
         title: { type: 'string', description: 'Tab display title.' },
       },
       output: {
@@ -394,7 +394,7 @@ export function createTools(
         },
         render: (_args, value) => [{
           type: 'text',
-          text: `opened workbench browser tab "${value.title}" [${value.url}]`,
+          text: `opened workbench browser tab "${value.title}" [${value.url}] — visible to the human now`,
         }],
       },
       execute(args: { url: string; title?: string }) {
@@ -403,6 +403,63 @@ export function createTools(
         return Promise.resolve(cleanLossless(tab))
       },
       presentCall: args => ({ card: 'generic', title: `Open in Workbench Browser: ${args.title || args.url}`, kind: 'execute' }),
+    }),
+
+    defineTool({
+      name: 'workbench_browser_list',
+      description: 'List open workbench browser tabs (id, url, title) so you can reference or close them.',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string', required: true },
+              url: { type: 'string', required: true },
+              title: { type: 'string', required: true },
+              sessionId: { type: 'string' },
+            },
+          },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: value.length === 0 ? '(no workbench browser tabs open)' : value.map(t => `${t.id} "${t.title}" [${t.url}]`).join('\n'),
+        }],
+      },
+      execute() {
+        if (!gateway) throw new Error('workbench gateway not available')
+        return Promise.resolve(cleanLossless(gateway.listBrowserTabs()))
+      },
+      isConcurrencySafe: () => true,
+      presentCall: () => ({ card: 'generic', title: 'List Workbench Browser Tabs', kind: 'read' }),
+    }),
+
+    defineTool({
+      name: 'workbench_browser_close',
+      description: 'Close a workbench browser tab by id (from workbench_browser_open or workbench_browser_list).',
+      parameters: {
+        id: { type: 'string', required: true, description: 'Browser tab id.' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            closed: { type: 'boolean', required: true },
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: value.closed ? `closed browser tab ${value.id}` : `browser tab ${value.id} was not open` }],
+      },
+      execute(args: { id: string }) {
+        if (!gateway) throw new Error('workbench gateway not available')
+        const existed = gateway.listBrowserTabs().some(t => t.id === args.id)
+        gateway.closeBrowserTab(args.id)
+        return Promise.resolve(cleanLossless({ id: args.id, closed: existed }))
+      },
+      presentCall: args => ({ card: 'generic', title: `Close Browser Tab ${args.id}`, kind: 'execute' }),
     }),
 
     defineTool({
@@ -437,7 +494,9 @@ const WORKBENCH_PROMPT = `A collaborative workbench view shares interactive term
 Coordination protocol:
 - busy=true means a model command is still in flight on that terminal. Do NOT send again — a second concurrent send throws. The gateway blocks human keystrokes while your command runs (their Ctrl+C still passes through as an interrupt), so you own the input stream until your send returns.
 - Terminal output you receive (send output, workbench_terminal_read) is sanitized for you: ANSI escapes stripped, TUI redraws and carriage-return overwrites resolved to final text. Full-screen programs (claude, vim, watch) still make poor tool targets — prefer their non-interactive flags (e.g. claude -p) and short commands.
-- The display stream marks your input with an [AI]$ line; human keystrokes are attributed in recentActivity with a "human:" prefix. Treat recentActivity as authoritative for who did what.`
+- The display stream marks your input with an [AI]$ line; human keystrokes are attributed in recentActivity with a "human:" prefix. Treat recentActivity as authoritative for who did what.
+
+Shared browser: workbench_browser_open renders a page in the human's workbench panel (the panel auto-reveals). Local files and localhost URLs are fully interactive; external http(s) sites are served through a built-in reader proxy (scripts stripped, navigation stays inside the panel), so public sites like baidu.com display fine. Use it whenever the human should SEE a page — search results, docs, dashboards — and workbench_browser_list/close to manage tabs.`
 
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)

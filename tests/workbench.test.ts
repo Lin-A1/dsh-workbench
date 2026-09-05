@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { WorkbenchGateway } from '../src/gateway.ts'
 import { createTools, resolveConfig } from '../src/index.ts'
+import { PROXY_ROUTE, rewriteHtml } from '../src/proxy.ts'
 import { sanitizeTerminalText, stripAnsiSequences } from '../src/terminal/ansi.ts'
 import type { WorkbenchServerFrame } from '../src/protocol.ts'
 import { JournalStore } from '../src/terminal/journal.ts'
@@ -350,6 +351,102 @@ describe('ansi sanitizing', () => {
     const result = await session.send({ data: 'tui-cmd', submit: true, idleMs: 50, timeoutMs: 500 })
     expect(result.output).not.toContain('\x1b')
     expect(result.output).toContain('done')
+    await manager.closeAll()
+  })
+})
+
+describe('reader proxy rewriting', () => {
+  it('strips scripts, routes links/forms through the proxy, and anchors subresources', () => {
+    const page = `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="frame-ancestors 'none'">
+<meta charset="utf-8"><title>bd</title>
+<link rel="stylesheet" href="/static/s.css">
+</head><body>
+<script>alert('x')</script>
+<script src="/a.js"></script>
+<a href="/s?wd=deepseek">search</a>
+<a href="javascript:void(0)">noop</a>
+<a href="#top">anchor</a>
+<form action="/search" method="get"><input name="wd"></form>
+<iframe src="https://ads.example.com/frame"></iframe>
+<img src="/img/logo.png">
+</body></html>`
+
+    const out = rewriteHtml(page, 'https://www.baidu.com/')
+    // scripts and CSP gone
+    expect(out).not.toContain('<script')
+    expect(out).not.toContain('Content-Security-Policy')
+    // navigable links proxied with absolute target
+    expect(out).toContain(`href="${PROXY_ROUTE}?url=${encodeURIComponent('https://www.baidu.com/s?wd=deepseek')}"`)
+    // javascript/anchor untouched
+    expect(out).toContain('href="javascript:void(0)"')
+    expect(out).toContain('href="#top"')
+    // GET form action proxied (browser appends ?wd=... on submit)
+    expect(out).toContain(`action="${PROXY_ROUTE}?url=${encodeURIComponent('https://www.baidu.com/search')}"`)
+    // nested iframe proxied too
+    expect(out).toContain(`src="${PROXY_ROUTE}?url=${encodeURIComponent('https://ads.example.com/frame')}"`)
+    // <base> anchors relative subresources to the origin page
+    expect(out).toContain('<base href="https://www.baidu.com/">')
+    expect(out).toContain('href="/static/s.css"')
+    expect(out).toContain('src="/img/logo.png"')
+  })
+
+  it('absolutizes relative hrefs before proxying', () => {
+    const out = rewriteHtml('<a href="page.html">next</a>', 'https://example.com/docs/index.html')
+    expect(out).toContain(encodeURIComponent('https://example.com/docs/page.html'))
+  })
+})
+
+describe('workbench browser tools', () => {
+  it('opens, lists, and closes shared browser tabs with summon broadcast', async () => {
+    const dir = await tempDir()
+    const profiles = new ProfileStore(dir)
+    const journal = new JournalStore(dir)
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 2,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      connectLocal: async () => new FakeConnection(),
+      onOpen: s => journal.attach(s),
+    })
+    const gateway = new WorkbenchGateway({ terminalManager: manager, profileStore: profiles, journalStore: journal })
+
+    const tools = new Map(createTools(manager, resolveConfig({}), profiles, gateway).map(t => [t.name, t]))
+    const openTool = tools.get('workbench_browser_open')!
+    const listTool = tools.get('workbench_browser_list')!
+    const closeTool = tools.get('workbench_browser_close')!
+
+    const FakeSocket2 = class {
+      readonly sent: WorkbenchServerFrame[] = []
+      readyState = 1
+      OPEN = 1
+      send(raw: string): void { this.sent.push(JSON.parse(raw) as WorkbenchServerFrame) }
+      on(): void { /* no-op */ }
+      close(): void { /* no-op */ }
+    }
+    const sock = new FakeSocket2()
+    gateway.handleConnection(sock as unknown as import('ws').WebSocket)
+
+    const opened = await (openTool.execute as Function)({ url: 'https://www.baidu.com', title: '百度' }, { signal: new AbortController().signal })
+    expect(opened.id).toContain('wb-page-')
+    expect(opened.title).toBe('百度')
+
+    const listed = await (listTool.execute as Function)({}, { signal: new AbortController().signal })
+    expect(listed).toHaveLength(1)
+
+    // open broadcasts an opened frame + summon to connected clients
+    await new Promise(r => setTimeout(r, 15))
+    expect(sock.sent.some(f => f.channel === 'browser' && f.type === 'opened')).toBe(true)
+    expect(sock.sent.some(f => f.channel === 'workbench' && f.type === 'summon')).toBe(true)
+
+    const closed = await (closeTool.execute as Function)({ id: opened.id }, { signal: new AbortController().signal })
+    expect(closed.closed).toBe(true)
+    const listedAfter = await (listTool.execute as Function)({}, { signal: new AbortController().signal })
+    expect(listedAfter).toHaveLength(0)
+
+    gateway.dispose()
     await manager.closeAll()
   })
 })

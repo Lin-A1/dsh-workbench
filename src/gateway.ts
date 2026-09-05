@@ -10,6 +10,7 @@ import { extname, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { WebSocketServer, type WebSocket } from 'ws'
+import { charsetFromContentType, rewriteHtml } from './proxy.ts'
 import type { JournalStore } from './terminal/journal.ts'
 import type { WorkbenchTerminalManager } from './terminal/manager.ts'
 import type { ProfileStore } from './terminal/profiles.ts'
@@ -66,6 +67,12 @@ export function registerWorkbenchGateway(ctx: Context, options: GatewayOptions):
     path: '/dsh-workbench/preview',
     handler: (req, res) => { void gateway.handlePreview(req, res) },
   }), 'workbench: local preview route')
+
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/dsh-workbench/proxy',
+    handler: (req, res) => { void gateway.handleProxy(req, res) },
+  }), 'workbench: reader proxy route')
 
   ctx.effect(() => webServer.registerUpgrade({
     path: '/dsh-workbench/ws',
@@ -160,6 +167,86 @@ export class WorkbenchGateway {
     catch (err) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
       res.end(`File preview error: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /**
+   * Reader proxy for external pages: fetch server-side (their X-Frame-Options
+   * only fences browser-side embedding, not a server fetch), cook the HTML
+   * into a same-origin reader document, and serve it. Navigation inside the
+   * page loops back through this route; localhost pages never need it.
+   */
+  async handleProxy(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET' || !isTrustedRequest(req, this.options.trustedHosts ?? [])) {
+      res.writeHead(req.method !== 'GET' ? 405 : 403, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end(req.method !== 'GET' ? 'Method Not Allowed' : 'untrusted')
+      return
+    }
+    const url = new URL(req.url ?? '', 'http://127.0.0.1')
+    const target = url.searchParams.get('url')
+    if (!target) {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('missing ?url= parameter')
+      return
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(target)
+    }
+    catch {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('invalid url')
+      return
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('only http(s) urls are proxied')
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 12_000)
+    try {
+      const upstream = await fetch(parsed, {
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) dsh-workbench-reader',
+          'accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
+          'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
+      })
+      const finalUrl = upstream.url || parsed.toString()
+      const contentType = upstream.headers.get('content-type') ?? ''
+      if (!contentType.includes('text/html') && !contentType.includes('xhtml')) {
+        // Non-HTML (pdf, image, download): bounce the iframe straight at it.
+        res.writeHead(302, { location: finalUrl })
+        res.end()
+        return
+      }
+      const buf = await upstream.arrayBuffer()
+      const charset = charsetFromContentType(contentType)
+      let html = ''
+      try {
+        html = new TextDecoder(charset, { fatal: false }).decode(buf)
+      }
+      catch {
+        html = new TextDecoder('utf-8', { fatal: false }).decode(buf)
+      }
+      const cooked = rewriteHtml(html, finalUrl)
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      })
+      res.end(cooked)
+    }
+    catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(`<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:32px;background:#f4f5f6;color:#1f2328">
+<h2>阅读代理无法加载该页面</h2><p style="color:#59636e">${target}</p><p><code>${reason}</code></p>
+<p style="color:#8b949e">站点可能要求登录 / 反爬拦截，可点击工具栏「在新窗口打开」直达。</p></body>`)
+    }
+    finally {
+      clearTimeout(timer)
     }
   }
 

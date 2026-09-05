@@ -43,17 +43,17 @@ TUI 程序（Claude Code、进度条、watch）的原始输出是每秒上百帧
 
 AI 打开终端 / 网页标签（或调用 `workbench_show`）时，面板会在所有已连接客户端自动展开 —— AI 的动作主动可见，人类不用翻找开关。人类随时可收起。
 
-### 🌐 协同浏览器（本地开发预览）
+### 🌐 协同浏览器（外网页面可读，本地页面可交互）
 
 <p align="center">
   <img src="docs/screenshots/browser-start.png" width="560" alt="协同浏览器起始页：本地开发服务快捷卡片" />
 </p>
 
-- 带地址栏（Omnibox）、前进 / 后退 / 刷新、复制与外开的完整预览视图；
-- 输入纯数字端口自动补全 `http://localhost:<port>`；
+- **外网站点走内置阅读代理**：公网页面的 X-Frame-Options 只能挡住浏览器端 iframe，挡不住服务端抓取 —— 网关代抓页面、剥离脚本与 CSP、站内链接继续经代理流转，`baidu.com` 等公网站点直接在面板里可看可点；
+- **本地内容完整交互**：localhost 与本地文件直连渲染（本地开发服务热更新页面原样可用），本地文件经安全预览路由（`/dsh-workbench/preview`）渲染，杜绝 `file://` 死链白屏；
+- 带地址栏（Omnibox）、前进 / 后退 / 刷新、复制与外开；输入纯数字端口自动补全 `http://localhost:<port>`；
 - 起始页提供本地开发服务快捷卡片（Harness 3080 / CRA 3000 / Vite 5173 / Java 8080 / FastAPI 8000 / Storybook 6006）；
-- 公网站点受 X-Frame-Options 限制时展示一键外开提示条；
-- 本地文件经安全预览路由（`/dsh-workbench/preview`）渲染，杜绝 `file://` 死链白屏。
+- **模型可主动开页**：`workbench_browser_open` 打开的页面会自动召唤面板展示给人类 —— AI 查到的搜索结果、文档、仪表盘，人类同屏即见。
 
 ### 🌗 亮暗双主题
 
@@ -82,6 +82,8 @@ AI 打开终端 / 网页标签（或调用 `workbench_show`）时，面板会在
 | `workbench_terminal_read` | 分页读取熟化后的保留输出与最近人类/AI 活动记录 |
 | `workbench_terminal_list` | 终端快照：未读字节、`busy` 同步位、最近活动 |
 | `workbench_terminal_close` | 关闭终端会话与底层进程 |
+| `workbench_browser_open` | 在共享浏览器中打开页面（外网自动走阅读代理），面板自动召唤给人类 |
+| `workbench_browser_list` / `workbench_browser_close` | 列出 / 关闭共享浏览器标签 |
 | `workbench_show` | 无副作用召唤面板（直播前把人类请到屏幕前） |
 
 系统提示词自动注入**协调协议**：先查 `busy` 再行动、busy 期间禁止并发 send、输出已熟化、`recentActivity` 是操作归属的权威来源。
@@ -134,6 +136,7 @@ allowBuilds:
 - **布局接管**：Harness 的 AppFrame 每次渲染都会重写内联网格并把右栏钳制在 520px。本插件不与 React 抢 DOM —— 通过 `body` 状态类 + 单个 CSS 变量 + 样式表 `!important` 在层叠顶层确定性地接管分屏宽度，跨渲染周期稳定。
 - **哨兵协议**：AI 命令尾部追加随机会话标签 `__DSHWB_DONE_<scope>_<seq>_<rand>__:$?`，从原始流中精准捕获完成时机与真实退出码；显示流过滤器对普通击键零延迟直出，仅暂存疑似哨兵前缀。
 - **多路复用网关**：终端 / 浏览器 / Git 通道复用单条 WebSocket（`/dsh-workbench/ws`），帧协议见 `src/protocol.ts`；loopback + Host + Origin 三重校验，LAN 需显式配置 `trustedHosts`。
+- **阅读代理**：外网页面由网关服务端抓取（12s 超时、仅 text/html），剥离 `<script>` 与 CSP 元素，`<a>`/`<form>`/`<iframe>` 改写回代理路由形成闭环导航，`<base>` 锚定相对子资源 —— X-Frame-Options 从此不再是面板的天花板。
 - **会话存续**：终端列表与 scrollback 日志持久化到 `~/.dsh-workbench/`，服务重启后自动恢复原会话，attach 即回放。
 
 ## 开发与验证

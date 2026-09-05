@@ -20,29 +20,18 @@ function resolveFrameUrl(raw: string): string {
   if (raw.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('/')) {
     return `/dsh-workbench/preview?file=${encodeURIComponent(raw)}`
   }
-  return raw
-}
-
-function isExternalWebUrl(url: string): boolean {
-  if (!url || url === 'about:blank') return false
-  if (url.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(url) || url.startsWith('/')) return false
+  // Localhost/loopback renders directly (fully interactive); external sites
+  // go through the reader proxy — their X-Frame-Options only fences plain
+  // iframes, the gateway fetches and cooks the page server-side.
   try {
-    const parsed = new URL(url)
-    const host = parsed.hostname.toLowerCase()
-    return !(
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '0.0.0.0' ||
-      host === '::1' ||
-      host.endsWith('.local') ||
-      host.startsWith('192.168.') ||
-      host.startsWith('10.') ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
-    )
+    const host = new URL(raw).hostname.toLowerCase()
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0' || /^127\./.test(host)
+    if (!isLocal) return `/dsh-workbench/proxy?url=${encodeURIComponent(raw)}`
   }
   catch {
-    return false
+    /* fall through to raw */
   }
+  return raw
 }
 
 export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element {
@@ -102,7 +91,7 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
   }
 
   const handleOpenExternal = () => {
-    window.open(resolveFrameUrl(currentUrl), '_blank', 'noopener,noreferrer')
+    window.open(currentUrl, '_blank', 'noopener,noreferrer')
   }
 
   const handleQuickLaunch = (url: string) => {
@@ -213,17 +202,7 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
           {/* 加载进度条 */}
           {loading ? <div className="wb-browser-progress" /> : null}
 
-          {/* 外网跨域限制提示条 */}
-          {isExternalWebUrl(currentUrl) && (
-            <div className="wb-browser-external-tip">
-              <span>💡 公网站点常限制 iframe 嵌入（X-Frame-Options），如遇空白或拒绝连接：</span>
-              <button type="button" className="wb-browser-external-link" onClick={handleOpenExternal}>
-                在新窗口打开 ↗
-              </button>
-            </div>
-          )}
-
-          {/* 主视口 iframe */}
+          {/* 主视口 iframe（外网站点经阅读代理同源呈现） */}
           <div className="wb-browser-viewport">
             <iframe
               ref={iframeRef}
