@@ -76,3 +76,33 @@ export function charsetFromContentType(contentType: string | undefined): string 
   const m = /charset=["']?([\w-]+)/i.exec(contentType ?? '')
   return m?.[1] ?? 'utf-8'
 }
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, '\'').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+}
+
+/**
+ * Detect client-side redirects inside a fetched page: `<meta http-equiv=
+ * "refresh">`, computed protocol rewrites (`location.href.replace(a, b)` —
+ * the classic bot-shell pattern), and literal `location.replace`/`location.href`
+ * assignments. Returns an absolute URL when the page bounces elsewhere.
+ */
+export function extractRedirectTarget(raw: string, currentUrl: string): string | undefined {
+  const base = new URL(currentUrl)
+  const meta = /http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["']?[^"'>]*url=([^"'>\s]+)/i.exec(raw)
+  if (meta) {
+    try {
+      const u = new URL(decodeHtmlEntities(meta[1]).trim(), base)
+      if (u.toString() !== base.toString()) return u.toString()
+    }
+    catch { /* fall through */ }
+  }
+  const computed = /location\.href\.replace\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*\)/.exec(raw)
+  if (computed) {
+    const u = currentUrl.replace(computed[1], computed[2])
+    if (u !== currentUrl) return u
+  }
+  const literal = /location\.(?:replace\(\s*|href\s*=\s*)["'](https?:\/\/[^"'\s]+)["']/i.exec(raw)
+  if (literal && literal[1] !== currentUrl) return literal[1]
+  return undefined
+}

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { WorkbenchGateway } from '../src/gateway.ts'
 import { createTools, resolveConfig } from '../src/index.ts'
-import { PROXY_ROUTE, rewriteHtml } from '../src/proxy.ts'
+import { PROXY_ROUTE, extractRedirectTarget, rewriteHtml } from '../src/proxy.ts'
 import { sanitizeTerminalText, stripAnsiSequences } from '../src/terminal/ansi.ts'
 import type { WorkbenchServerFrame } from '../src/protocol.ts'
 import { JournalStore } from '../src/terminal/journal.ts'
@@ -394,6 +394,23 @@ describe('reader proxy rewriting', () => {
   it('absolutizes relative hrefs before proxying', () => {
     const out = rewriteHtml('<a href="page.html">next</a>', 'https://example.com/docs/index.html')
     expect(out).toContain(encodeURIComponent('https://example.com/docs/page.html'))
+  })
+
+  it('detects client-side redirect shells (meta refresh, protocol rewrite, location literal)', () => {
+    // Baidu-style bot shell: computed protocol rewrite
+    const shell = `<html><head><script>location.replace(location.href.replace("https://","http://"));</script></head></html>`
+    expect(extractRedirectTarget(shell, 'https://www.baidu.com/')).toBe('http://www.baidu.com/')
+
+    // classic meta refresh
+    const meta = `<meta http-equiv="refresh" content="0;url=https://example.com/landing">`
+    expect(extractRedirectTarget(meta, 'https://old.example.com/x')).toBe('https://example.com/landing')
+
+    // literal location assignment
+    const literal = `<script>location.href='https://moved.example.net/home'</script>`
+    expect(extractRedirectTarget(literal, 'https://example.com/')).toBe('https://moved.example.net/home')
+
+    // normal pages bounce nowhere
+    expect(extractRedirectTarget('<html><body>hello</body></html>', 'https://example.com/')).toBeUndefined()
   })
 })
 

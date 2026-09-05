@@ -10,7 +10,7 @@ import { extname, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { charsetFromContentType, rewriteHtml } from './proxy.ts'
+import { charsetFromContentType, extractRedirectTarget, rewriteHtml } from './proxy.ts'
 import type { JournalStore } from './terminal/journal.ts'
 import type { WorkbenchTerminalManager } from './terminal/manager.ts'
 import type { ProfileStore } from './terminal/profiles.ts'
@@ -203,32 +203,45 @@ export class WorkbenchGateway {
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 12_000)
+    const fetchHeaders = {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) dsh-workbench-reader',
+      'accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
+      'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    } as const
     try {
-      const upstream = await fetch(parsed, {
-        redirect: 'follow',
-        signal: controller.signal,
-        headers: {
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) dsh-workbench-reader',
-          'accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
-          'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        },
-      })
-      const finalUrl = upstream.url || parsed.toString()
-      const contentType = upstream.headers.get('content-type') ?? ''
-      if (!contentType.includes('text/html') && !contentType.includes('xhtml')) {
+      // Follow up to 2 client-side bounces (meta refresh / JS location shells)
+      // after network redirects settle — bot-walls love serving redirect stubs.
+      let current = parsed.toString()
+      let upstream = await fetch(parsed, { redirect: 'follow', signal: controller.signal, headers: fetchHeaders })
+      let contentType = upstream.headers.get('content-type') ?? ''
+      let html: string | undefined
+      for (let hop = 0; hop < 2; hop++) {
+        if (!contentType.includes('text/html') && !contentType.includes('xhtml')) break
+        const buf = await upstream.arrayBuffer()
+        if (buf.byteLength > 8 * 1024 * 1024) throw new Error('page exceeds 8 MB reader cap')
+        const charset = charsetFromContentType(contentType)
+        let decoded: string
+        try {
+          decoded = new TextDecoder(charset, { fatal: false }).decode(buf)
+        }
+        catch {
+          decoded = new TextDecoder('utf-8', { fatal: false }).decode(buf)
+        }
+        const next = extractRedirectTarget(decoded, upstream.url || current)
+        if (!next) {
+          html = decoded
+          break
+        }
+        current = next
+        upstream = await fetch(next, { redirect: 'follow', signal: controller.signal, headers: fetchHeaders })
+        contentType = upstream.headers.get('content-type') ?? ''
+      }
+      const finalUrl = upstream.url || current
+      if (html === undefined) {
         // Non-HTML (pdf, image, download): bounce the iframe straight at it.
         res.writeHead(302, { location: finalUrl })
         res.end()
         return
-      }
-      const buf = await upstream.arrayBuffer()
-      const charset = charsetFromContentType(contentType)
-      let html = ''
-      try {
-        html = new TextDecoder(charset, { fatal: false }).decode(buf)
-      }
-      catch {
-        html = new TextDecoder('utf-8', { fatal: false }).decode(buf)
       }
       const cooked = rewriteHtml(html, finalUrl)
       res.writeHead(200, {
