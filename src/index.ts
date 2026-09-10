@@ -11,12 +11,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolResult } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import { registerWorkbenchGateway, type WorkbenchGateway } from './gateway.ts'
-import { renderList, renderOpen, renderRead, renderSend } from './render.ts'
+import { readGitStatus } from './git.ts'
+import { renderGitStatus, renderList, renderOpen, renderRead, renderSend } from './render.ts'
 import { createSessionDirectory } from './session-registry.ts'
 import { JournalStore } from './terminal/journal.ts'
-import { WorkbenchTerminalManager } from './terminal/manager.ts'
+import { WorkbenchTerminalManager, defaultLocalCwd } from './terminal/manager.ts'
 import { ProfileStore } from './terminal/profiles.ts'
 import { TerminalStore } from './terminal/store.ts'
+import type { GitStatusSummary } from './render.ts'
 import type { SessionCwdResolver } from './session-registry.ts'
 import type { TerminalKind } from './types.ts'
 
@@ -222,7 +224,7 @@ export function createTools(
         // project-root heuristic remains the fallback.
         const cwd = args.cwd ?? base?.cwd ?? (sessionCwd ? await sessionCwd(sessionId) : undefined)
 
-        const { snapshot, motd } = await manager.open({
+        const { snapshot, banner } = await manager.open({
           kind,
           name: args.name ?? base?.name,
           sessionId,
@@ -239,8 +241,11 @@ export function createTools(
           await manager.close(snapshot.terminalId)
           throw new Error('workbench terminal open aborted')
         }
+        // The model's result waits for the shell's own banner — that is the
+        // one caller for which the cwd and prompt in it are worth the wait.
+        const motd = await banner
         const view = manager.get(snapshot.terminalId).collaborationView()
-        gateway?.broadcastTerminalOpened(view, motd)
+        gateway?.broadcastTerminalOpened(view)
         return cleanLossless({ ...snapshot, motd })
       },
       presentCall: args => ({
@@ -478,6 +483,59 @@ export function createTools(
     }),
 
     defineTool({
+      name: 'workbench_git_status',
+      description: 'Read the Git worktree of this session\'s workspace: current branch, ahead/behind counts, total added/deleted lines, and every changed path with its index/worktree status letters. Read-only and safe to call any time — use it to see what the human has already changed before you start editing, and again afterwards to confirm your own edits landed.',
+      parameters: {
+        cwd: { type: 'string', description: 'Repository directory to inspect. Omit to use this session\'s workspace directory.' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            repository: { type: 'boolean', required: true },
+            branch: { required: true, oneOf: [{ type: 'string' }, { type: 'null' }] },
+            ahead: { type: 'integer', required: true },
+            behind: { type: 'integer', required: true },
+            additions: { type: 'integer', required: true },
+            deletions: { type: 'integer', required: true },
+            files: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: { type: 'string', required: true },
+                  y: { type: 'string', required: true },
+                  path: { type: 'string', required: true },
+                },
+              },
+            },
+            error: { type: 'string' },
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: renderGitStatus(value as GitStatusSummary) }],
+      },
+      async execute(args: { cwd?: string }, exec) {
+        const cwd = args.cwd ?? (sessionCwd ? await sessionCwd(agentSessionId(exec)) : undefined) ?? defaultLocalCwd()
+        const { view, error } = await readGitStatus(cwd)
+        return cleanLossless({
+          repository: view !== null,
+          branch: view?.branch ?? null,
+          ahead: view?.ahead ?? 0,
+          behind: view?.behind ?? 0,
+          additions: view?.additions ?? 0,
+          deletions: view?.deletions ?? 0,
+          files: view?.files ?? [],
+          error,
+        })
+      },
+      isConcurrencySafe: () => true,
+      presentCall: () => ({ card: 'generic', title: 'Read Git Status', kind: 'read' }),
+    }),
+
+    defineTool({
       name: 'workbench_show',
       description: 'Reveal the collaborative workbench panel in the web UI — opens the right-hand split if the human has it closed. No terminal or browser side effects; use it when you want the human to watch a terminal session or a preview you are about to create.',
       parameters: {},
@@ -511,7 +569,9 @@ Coordination protocol:
 - Terminal output you receive (send output, workbench_terminal_read) is sanitized for you: ANSI escapes stripped, TUI redraws and carriage-return overwrites resolved to final text. Full-screen programs (claude, vim, watch) still make poor tool targets — prefer their non-interactive flags (e.g. claude -p) and short commands.
 - The display stream marks your input with an [AI]$ line; human keystrokes are attributed in recentActivity with a "human:" prefix. Treat recentActivity as authoritative for who did what.
 
-Shared browser: workbench_browser_open renders a page in the human's workbench panel (the panel auto-reveals). Local files and localhost URLs are fully interactive; external http(s) sites are served through a built-in reader proxy (scripts stripped, navigation stays inside the panel), so public sites like baidu.com display fine. Use it whenever the human should SEE a page — search results, docs, dashboards — and workbench_browser_list/close to manage tabs.`
+Shared browser: workbench_browser_open renders a page in the human's workbench panel (the panel auto-reveals). Local files and localhost URLs are fully interactive; external http(s) sites are served through a built-in reader proxy (scripts stripped, navigation stays inside the panel), so public sites like baidu.com display fine. Use it whenever the human should SEE a page — search results, docs, dashboards — and workbench_browser_list/close to manage tabs.
+
+Shared Git view: the human's panel has a live Git tab (branch, ahead/behind, changed paths, diffs) over this session's workspace. workbench_git_status reads the same worktree for you — call it before you start editing to see what the human already has in flight, and again afterwards to confirm your own edits are there. It is read-only; commit and branch operations stay with the human.`
 
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)

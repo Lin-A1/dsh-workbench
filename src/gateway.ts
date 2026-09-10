@@ -10,8 +10,9 @@ import { extname, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { charsetFromContentType, extractRedirectTarget, rewriteHtml } from './proxy.ts'
-import { UnknownTerminalError } from './terminal/manager.ts'
+import { readGitDiff, readGitStatus } from './git.ts'
+import { charsetFromContentType, extractRedirectTarget, isDowngradeStub, isProtocolDowngrade, mobileHostVariant, rewriteHtml, withReaderNotice } from './proxy.ts'
+import { UnknownTerminalError, defaultLocalCwd } from './terminal/manager.ts'
 import type { SessionCwdResolver, SessionExistsProbe } from './session-registry.ts'
 import type { JournalStore } from './terminal/journal.ts'
 import type { WorkbenchTerminalManager } from './terminal/manager.ts'
@@ -36,6 +37,11 @@ export interface GatewayOptions {
 }
 
 const MAX_FRAME_BYTES = 64 * 1024
+
+/** How much attribution history rides along with a terminal attach. */
+const ATTACH_ACTIVITY_LIMIT = 80
+const PROXY_TIMEOUT_MS = 12_000
+const PROXY_MAX_BYTES = 8 * 1024 * 1024
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -208,7 +214,7 @@ export class WorkbenchGateway {
     }
 
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 12_000)
+    const timer = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS)
     const fetchHeaders = {
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) dsh-workbench-reader',
       'accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
@@ -217,13 +223,18 @@ export class WorkbenchGateway {
     try {
       // Follow up to 2 client-side bounces (meta refresh / JS location shells)
       // after network redirects settle — bot-walls love serving redirect stubs.
+      // A bounce that drops https for http is refused: it is a security retreat
+      // first, and often a dead end besides. www.baidu.com is the live example —
+      // its downgraded host resolves into this machine's proxy fake-IP range,
+      // where a port-80 connection is accepted and then answered with nothing,
+      // so chasing the bounce would throw away a page we already hold.
       let current = parsed.toString()
       let upstream = await fetch(parsed, { redirect: 'follow', signal: controller.signal, headers: fetchHeaders })
       let contentType = upstream.headers.get('content-type') ?? ''
       let html: string | undefined
       const readHtml = async (): Promise<string> => {
         const buf = await upstream.arrayBuffer()
-        if (buf.byteLength > 8 * 1024 * 1024) throw new Error('page exceeds 8 MB reader cap')
+        if (buf.byteLength > PROXY_MAX_BYTES) throw new Error(`page exceeds ${Math.round(PROXY_MAX_BYTES / 1024 / 1024)} MB reader cap`)
         const charset = charsetFromContentType(contentType)
         try {
           return new TextDecoder(charset, { fatal: false }).decode(buf)
@@ -232,11 +243,13 @@ export class WorkbenchGateway {
           return new TextDecoder('utf-8', { fatal: false }).decode(buf)
         }
       }
+      const isHtml = (): boolean => contentType.includes('text/html') || contentType.includes('xhtml')
       for (let hop = 0; hop < 2 && html === undefined; hop++) {
-        if (!contentType.includes('text/html') && !contentType.includes('xhtml')) break
+        if (!isHtml()) break
         const decoded = await readHtml()
-        const next = extractRedirectTarget(decoded, upstream.url || current)
-        if (!next) {
+        const from = upstream.url || current
+        const next = extractRedirectTarget(decoded, from)
+        if (!next || isProtocolDowngrade(from, next)) {
           html = decoded
           break
         }
@@ -245,17 +258,50 @@ export class WorkbenchGateway {
         contentType = upstream.headers.get('content-type') ?? ''
       }
       // Redirect budget exhausted on an HTML page: serve what we landed on.
-      if (html === undefined && (contentType.includes('text/html') || contentType.includes('xhtml'))) {
+      if (html === undefined && isHtml()) {
         html = await readHtml()
       }
-      const finalUrl = upstream.url || current
+      let finalUrl = upstream.url || current
+
+      // The page is only a "please use plain HTTP" shell — the desktop site
+      // will not talk to us over TLS at all. Narrow reader columns suit the
+      // mobile host anyway, so try it once before giving up on the site.
+      let substitutedFrom: string | undefined
+      if (html !== undefined && isDowngradeStub(html, finalUrl)) {
+        const mobile = mobileHostVariant(finalUrl)
+        if (mobile !== undefined) {
+          try {
+            const alt = await fetch(mobile, { redirect: 'follow', signal: controller.signal, headers: fetchHeaders })
+            const altType = alt.headers.get('content-type') ?? ''
+            if (altType.includes('text/html') || altType.includes('xhtml')) {
+              const buf = await alt.arrayBuffer()
+              if (buf.byteLength <= PROXY_MAX_BYTES) {
+                const altHtml = new TextDecoder(charsetFromContentType(altType), { fatal: false }).decode(buf)
+                const altUrl = alt.url || mobile
+                if (!isDowngradeStub(altHtml, altUrl)) {
+                  substitutedFrom = finalUrl
+                  html = altHtml
+                  finalUrl = altUrl
+                }
+              }
+            }
+          }
+          catch {
+            // Keep the shell we already hold; the notice below still explains it.
+          }
+        }
+      }
+
       if (html === undefined) {
         // Non-HTML (pdf, image, download): bounce the iframe straight at it.
         res.writeHead(302, { location: finalUrl })
         res.end()
         return
       }
-      const cooked = rewriteHtml(html, finalUrl)
+      let cooked = rewriteHtml(html, finalUrl)
+      if (substitutedFrom !== undefined) {
+        cooked = withReaderNotice(cooked, `桌面版只提供明文 HTTP 地址，而本机到该地址的 HTTP 连接拿不到任何响应，已为你切换到 ${new URL(finalUrl).hostname} 移动版；点工具栏「在新窗口打开」可直达 ${new URL(substitutedFrom).hostname}。`)
+      }
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
@@ -264,10 +310,10 @@ export class WorkbenchGateway {
       res.end(cooked)
     }
     catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
+      const reason = describeFetchFailure(err)
       res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' })
       res.end(`<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:32px;background:#f4f5f6;color:#1f2328">
-<h2>阅读代理无法加载该页面</h2><p style="color:#59636e">${target}</p><p><code>${reason}</code></p>
+<h2>阅读代理无法加载该页面</h2><p style="color:#59636e">${escapeHtml(target)}</p><p><code>${escapeHtml(reason)}</code></p>
 <p style="color:#8b949e">站点可能要求登录 / 反爬拦截，可点击工具栏「在新窗口打开」直达。</p></body>`)
     }
     finally {
@@ -379,7 +425,19 @@ export class WorkbenchGateway {
           return
         }
         case 'resize': {
-          await this.guardTerminal(ws, frame.id, () => this.options.terminalManager.get(frame.id).resize(Number(frame.rows), Number(frame.cols)))
+          await this.guardTerminal(ws, frame.id, () => {
+            this.options.terminalManager.get(frame.id).resize(Number(frame.rows), Number(frame.cols))
+            // A resize is the one change to a terminal's view that nothing else
+            // broadcasts, so the panel's size readout sat at the value the
+            // shell was opened with. Answer the socket that asked, and only
+            // that one: during a split drag this would otherwise fan out a
+            // view list to every client at pointer cadence.
+            this.send(ws, {
+              channel: 'terminal',
+              type: 'terminals',
+              terminals: this.options.terminalManager.collaborationViews(this.socketSessions.get(ws)),
+            })
+          })
           return
         }
         case 'open': {
@@ -387,9 +445,13 @@ export class WorkbenchGateway {
           return
         }
         case 'close': {
+          // An attached socket hears about the death from its own session
+          // subscription, so replying here as well sent two closed frames per
+          // close and made the tab strip flicker.
+          const attached = this.attachments.get(ws)?.has(frame.id) === true
           const outcome = await this.guardTerminal(ws, frame.id, () => this.options.terminalManager.close(frame.id))
           if (outcome === undefined) return
-          this.send(ws, { channel: 'terminal', type: 'closed', id: frame.id, outcome })
+          if (!attached) this.send(ws, { channel: 'terminal', type: 'closed', id: frame.id, outcome })
           this.broadcastTerminals()
           return
         }
@@ -408,7 +470,18 @@ export class WorkbenchGateway {
     }
 
     if (frame.channel === 'git') {
-      this.send(ws, { channel: 'git', type: 'status', status: null })
+      const cwd = frame.cwd ?? await this.workspaceCwd(frame.sessionId ?? this.socketSessions.get(ws)) ?? defaultLocalCwd()
+      if (frame.type === 'status') {
+        const { view, error } = await readGitStatus(cwd)
+        this.send(ws, { channel: 'git', type: 'status', status: view, error })
+        return
+      }
+      if (frame.type === 'diff') {
+        const { diff, error } = await readGitDiff(cwd, frame.path)
+        this.send(ws, { channel: 'git', type: 'diff', path: frame.path, diff, error })
+        return
+      }
+      return
     }
   }
 
@@ -551,7 +624,18 @@ export class WorkbenchGateway {
     }))
 
     this.attachments.get(ws)?.set(id, { disposers })
-    this.send(ws, { channel: 'terminal', type: 'attached', id, view: session.collaborationView(), replay: { text: replayText, truncated: journal.truncated } })
+    this.send(ws, {
+      channel: 'terminal',
+      type: 'attached',
+      id,
+      view: session.collaborationView(),
+      replay: { text: replayText, truncated: journal.truncated },
+      // Attribution history travels with the attach: a client that mounts
+      // after the fact (reopened panel, reconnected socket, tab switch) would
+      // otherwise show an empty activity stream for work it can still see in
+      // the scrollback.
+      activity: session.recentActivity(ATTACH_ACTIVITY_LIMIT),
+    })
   }
 
   private detachTerminal(ws: WebSocket, id: string): void {
@@ -575,7 +659,7 @@ export class WorkbenchGateway {
     const kind = request.kind ?? base?.kind ?? (request.host ? 'ssh' : 'local')
     const sessionId = request.sessionId ?? this.socketSessions.get(ws)
 
-    const { snapshot, motd } = await this.options.terminalManager.open({
+    const { snapshot } = await this.options.terminalManager.open({
       kind,
       name: request.name ?? base?.name,
       sessionId,
@@ -588,8 +672,11 @@ export class WorkbenchGateway {
       echo: request.echo ?? base?.echo,
     })
 
+    // The shell's banner is deliberately not awaited here: the tab must appear
+    // as soon as the shell is live, and the banner is only ever decoration on
+    // the model's tool result (workbench_terminal_open awaits it itself).
     const view = this.options.terminalManager.get(snapshot.terminalId).collaborationView()
-    this.send(ws, { channel: 'terminal', type: 'opened', view, motd })
+    this.send(ws, { channel: 'terminal', type: 'opened', view })
     this.broadcastSummon()
     this.broadcastTerminals()
   }
@@ -610,9 +697,9 @@ export class WorkbenchGateway {
   }
 
   /** Broadcast a newly opened terminal to all connected clients and reveal the panel. */
-  broadcastTerminalOpened(view: TerminalCollaborationView, motd: string): void {
+  broadcastTerminalOpened(view: TerminalCollaborationView): void {
     for (const ws of this.sockets) {
-      this.send(ws, { channel: 'terminal', type: 'opened', view, motd })
+      this.send(ws, { channel: 'terminal', type: 'opened', view })
     }
     this.broadcastTerminals()
     this.broadcastSummon()
@@ -650,6 +737,32 @@ export class WorkbenchGateway {
     }
     this.sockets.clear()
   }
+}
+
+/**
+ * Turn a failed `fetch` into something the human can act on. Node collapses
+ * every transport failure into a bare `fetch failed` and hides the part that
+ * matters inside `cause` — `ECONNREFUSED 127.0.0.1:7897` IS the diagnosis when
+ * a local proxy is down — so unwrap it here, where the page can show it.
+ */
+function describeFetchFailure(err: unknown): string {
+  if (!(err instanceof Error)) return String(err)
+  if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+    return `timed out after ${PROXY_TIMEOUT_MS / 1000} s`
+  }
+  const cause = (err as { cause?: unknown }).cause
+  if (!(cause instanceof Error)) return `${err.name}: ${err.message}`
+  const code = (cause as { code?: string }).code
+  const address = (cause as { address?: string }).address
+  const port = (cause as { port?: number }).port
+  const where = address === undefined ? '' : ` @ ${address}${port === undefined ? '' : `:${port}`}`
+  const deadLocalProxy = code === 'ECONNREFUSED' && (address === '127.0.0.1' || address === '::1')
+  const hint = deadLocalProxy ? ' — 本机代理没有在监听，确认代理进程后重启 dsh' : ''
+  return `${code ?? cause.name}${where}: ${cause.message}${hint}`
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 }
 
 function isLoopbackHostname(hostname: string): boolean {

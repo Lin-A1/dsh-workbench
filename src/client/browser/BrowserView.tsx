@@ -9,6 +9,16 @@ import { useEffect, useRef, useState } from 'react'
 import type { WorkbenchBrowserTab } from '../../protocol.ts'
 import { ArrowLeftIcon, ArrowRightIcon, CopyIcon, ExternalLinkIcon, GlobeIcon, ReloadIcon } from '../icons.tsx'
 
+/**
+ * Where a browser tab goes when it is created without an address.
+ *
+ * A tab that opens on a hint screen reads as "the browser did not open" — the
+ * new-tab gesture has to land on a real page. Baidu is the default because it
+ * is the site the reader proxy is verified against here; change this one
+ * constant to use another.
+ */
+export const DEFAULT_HOME_URL = 'https://www.baidu.com'
+
 export interface BrowserViewProps {
   tab: WorkbenchBrowserTab
   onNavigate?: (url: string) => void
@@ -94,13 +104,6 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
     window.open(currentUrl, '_blank', 'noopener,noreferrer')
   }
 
-  const handleQuickLaunch = (url: string) => {
-    setInputUrl(url)
-    setCurrentUrl(url)
-    onNavigate?.(url)
-    setLoading(true)
-  }
-
   return (
     <div className="wb-browser-root">
       {/* 浏览器控制与地址栏 (Omnibox) */}
@@ -173,29 +176,14 @@ export function BrowserView({ tab, onNavigate }: BrowserViewProps): JSX.Element 
         </div>
       </div>
 
-      {/* 起始页：不加载 iframe，杜绝死链白屏 */}
+      {/* No iframe until an address is committed, so a tab can never open on a
+          dead white rectangle. This is a fallback now, not the landing state:
+          a new tab opens on DEFAULT_HOME_URL. */}
       {isStartPage ? (
         <div className="wb-start-page">
           <div className="wb-start-mark"><GlobeIcon size={26} /></div>
           <h4 className="wb-start-title">协同浏览器</h4>
           <p className="wb-start-hint">在上方地址栏输入网址或本地文件路径，人机共用同一视图</p>
-          <p className="wb-start-group-label">快速直达 · 本地开发服务</p>
-          <div className="wb-start-grid">
-            {[
-              { label: 'Harness 控制台', port: '3080', url: 'http://127.0.0.1:3080', desc: '本应用' },
-              { label: 'React / CRA', port: '3000', url: 'http://localhost:3000', desc: '前端默认' },
-              { label: 'Vite Dev', port: '5173', url: 'http://localhost:5173', desc: '热更新' },
-              { label: 'Webpack / Java', port: '8080', url: 'http://localhost:8080', desc: '通用服务' },
-              { label: 'Python / FastAPI', port: '8000', url: 'http://localhost:8000', desc: '后端 API' },
-              { label: 'Storybook', port: '6006', url: 'http://localhost:6006', desc: '组件预览' },
-            ].map(item => (
-              <button key={item.port} type="button" className="wb-start-card" onClick={() => handleQuickLaunch(item.url)}>
-                <span className="wb-start-card-port">{item.port}</span>
-                <span className="wb-start-card-label">{item.label}</span>
-                <span className="wb-start-card-desc">{item.desc}</span>
-              </button>
-            ))}
-          </div>
         </div>
       ) : (
         <>

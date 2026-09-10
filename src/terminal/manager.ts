@@ -10,7 +10,7 @@ import { join, dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { hostAllowed } from './allowlist.ts'
 import { connectLocal } from './local.ts'
-import { WorkbenchTerminalSession } from './session.ts'
+import { DEFAULT_STARTUP_QUIET_MS, WorkbenchTerminalSession } from './session.ts'
 import { connectSsh } from './ssh.ts'
 import type { TerminalStore } from './store.ts'
 import type { ActivityEntry, TerminalCollaborationView, TerminalConnection, TerminalKind, TerminalSnapshot } from '../types.ts'
@@ -40,7 +40,12 @@ function resolveSmartCwd(): string {
   }
 }
 
-function defaultLocalCwd(): string {
+/**
+ * The directory a terminal lands in when nothing named one. Exported because
+ * the Git panel asks the same question — a diff of nowhere is worse than a
+ * diff of the project the human is actually in.
+ */
+export function defaultLocalCwd(): string {
   try {
     return resolveSmartCwd()
   }
@@ -55,6 +60,12 @@ export interface ManagerOptions {
   defaultPort: number
   connectTimeoutMs: number
   maxScrollbackBytes: number
+  /**
+   * Silence that ends a shell's startup capture. Production leaves it at
+   * {@link DEFAULT_STARTUP_QUIET_MS}; tests shorten it so opening a terminal
+   * does not cost a fifth of a second each.
+   */
+  startupQuietMs?: number
   keepaliveIntervalMs?: number
   connectSsh?: typeof connectSsh
   connectLocal?: typeof connectLocal
@@ -172,10 +183,10 @@ export class WorkbenchTerminalManager {
     if (claimed > 0) this.notifyChange()
   }
 
-  async open(req: OpenOptions): Promise<{ snapshot: TerminalSnapshot; motd: string }> {
+  async open(req: OpenOptions): Promise<{ snapshot: TerminalSnapshot; banner: Promise<string> }> {
     if (req.id && this.sessions.has(req.id)) {
       const existing = this.sessions.get(req.id)!
-      return { snapshot: existing.snapshot(), motd: '' }
+      return { snapshot: existing.snapshot(), banner: Promise.resolve('') }
     }
 
     if (this.sessions.size >= this.options.maxSessions) {
@@ -219,7 +230,7 @@ export class WorkbenchTerminalManager {
       req = { ...req, cwd: localCwd }
     }
 
-    const { session, motd } = await WorkbenchTerminalSession.start(
+    const { session, banner } = await WorkbenchTerminalSession.start(
       id,
       {
         kind: req.kind,
@@ -236,9 +247,17 @@ export class WorkbenchTerminalManager {
         maxScrollbackBytes: this.options.maxScrollbackBytes,
         cols: INITIAL_COLS,
         rows: INITIAL_ROWS,
+        startupQuietMs: this.options.startupQuietMs ?? DEFAULT_STARTUP_QUIET_MS,
       },
       this.options.connectTimeoutMs,
     )
+
+    // A shell that exited before it printed anything never came up: report it
+    // now rather than handing back a tab that is dead on arrival.
+    if (session.snapshot().status.kind === 'exited' && session.displayBacklog().length === 0) {
+      connection.close()
+      throw new Error(`workbench: shell for ${id} exited during startup`)
+    }
 
     this.sessions.set(id, session)
     session.onClose(() => this.notifyChange())
@@ -261,7 +280,7 @@ export class WorkbenchTerminalManager {
     }
 
     this.notifyChange()
-    return { snapshot: session.snapshot(), motd }
+    return { snapshot: session.snapshot(), banner }
   }
 
   get(terminalId: string): WorkbenchTerminalSession {

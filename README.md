@@ -52,15 +52,17 @@ AI 打开终端 / 网页标签（或调用 `workbench_show`）时，面板会在
 
 ### 🌐 协同浏览器（外网页面可读，本地页面可交互）
 
-<p align="center">
-  <img src="docs/screenshots/browser-start.png" width="560" alt="协同浏览器起始页：本地开发服务快捷卡片" />
-</p>
-
+- **新建标签页直接落地真实页面**：默认打开 `https://www.baidu.com`（`DEFAULT_HOME_URL` 一个常量，改它即可），而不是只显示占位提示 —— "新建网页标签"就该得到一个浏览器；
 - **外网站点走内置阅读代理**：公网页面的 X-Frame-Options 只能挡住浏览器端 iframe，挡不住服务端抓取 —— 网关代抓页面、剥离脚本与 CSP、站内链接继续经代理流转，`baidu.com` 等公网站点直接在面板里可看可点；
 - **本地内容完整交互**：localhost 与本地文件直连渲染（本地开发服务热更新页面原样可用），本地文件经安全预览路由（`/dsh-workbench/preview`）渲染，杜绝 `file://` 死链白屏；
 - 带地址栏（Omnibox）、前进 / 后退 / 刷新、复制与外开；输入纯数字端口自动补全 `http://localhost:<port>`；
-- 起始页提供本地开发服务快捷卡片（Harness 3080 / CRA 3000 / Vite 5173 / Java 8080 / FastAPI 8000 / Storybook 6006）；
 - **模型可主动开页**：`workbench_browser_open` 打开的页面会自动召唤面板展示给人类 —— AI 查到的搜索结果、文档、仪表盘，人类同屏即见。
+
+### 🌿 Git 变更面板（真读工作区，不是占位）
+
+- 分支 / ahead-behind、增删行数、变更文件列表（`git status --porcelain` 语义）与逐文件 Diff，全部读会话自己的工作区；
+- 走 `execFile` 参数向量、绝不经 shell，`GIT_OPTIONAL_LOCKS=0` 不会刷新索引去和人类自己的 git 操作打架；未跟踪文件按全新增渲染（git 对它没有 diff）；
+- 只读：提交与分支操作留给人。模型侧同一份实现暴露为 `workbench_git_status`，人与 AI 看到的是同一个工作区。
 
 ### 🌗 亮暗双主题
 
@@ -74,9 +76,9 @@ AI 打开终端 / 网页标签（或调用 `workbench_show`）时，面板会在
 
 | 快捷键 | 作用 |
 |---|---|
-| `Ctrl + \`（macOS `⌘J`） | 展开 / 收起工作台 |
-| `Ctrl + Shift + M` | 最大化 / 还原（全宽铺满） |
-| 拖拽边缘手柄 | 自由调整分屏宽度（28px 大热区，双击复位 48%） |
+| `Ctrl + \`（macOS `⌘J`） | 把工作台标签页切到前台；已在前台时收起右栏 |
+
+右栏宽度、全屏与收起由 Harness 右侧栏自己的拖拽手柄和按钮提供（手柄用 pointer capture，面板里的网页预览不会在拖动时吞掉指针）。
 
 ---
 
@@ -91,6 +93,7 @@ AI 打开终端 / 网页标签（或调用 `workbench_show`）时，面板会在
 | `workbench_terminal_close` | 关闭终端会话与底层进程 |
 | `workbench_browser_open` | 在共享浏览器中打开页面（外网自动走阅读代理），面板自动召唤给人类 |
 | `workbench_browser_list` / `workbench_browser_close` | 列出 / 关闭共享浏览器标签 |
+| `workbench_git_status` | 读会话工作区的分支 / ahead-behind / 增删行数 / 变更文件（只读） |
 | `workbench_show` | 无副作用召唤面板（直播前把人类请到屏幕前） |
 
 系统提示词自动注入**协调协议**：先查 `busy` 再行动、busy 期间禁止并发 send、输出已熟化、`recentActivity` 是操作归属的权威来源。
@@ -140,11 +143,12 @@ allowBuilds:
 
 ## 工作原理
 
-- **布局接管**：Harness 的 AppFrame 每次渲染都会重写内联网格并把右栏钳制在 520px。本插件不与 React 抢 DOM —— 通过 `body` 状态类 + 单个 CSS 变量 + 样式表 `!important` 在层叠顶层确定性地接管分屏宽度，跨渲染周期稳定。
+- **右侧栏标签页**：工作台是 Harness 右侧栏里的一个**标签页类型**（`ctx.sidebarRightTabs.register` + `sidebar.right.pane.tab` 的 body，key 为本插件的 `id`），列宽、标签条、全屏与拖拽手柄都归右侧栏自己。本插件不碰任何几何：旧实现用 `body` 状态类加 `!important` 覆盖 AppFrame 的网格，是因为当时的 `details` 列既被钳制又被内联重写；那套 API 在 Harness 0.1.5 已被右侧栏标签页体系取代。
 - **哨兵协议**：AI 命令尾部追加随机会话标签 `__DSHWB_DONE_<scope>_<seq>_<rand>__:$?`，从原始流中精准捕获完成时机与真实退出码；显示流过滤器对普通击键零延迟直出，仅暂存疑似哨兵前缀。
 - **多路复用网关**：终端 / 浏览器 / Git 通道复用单条 WebSocket（`/dsh-workbench/ws`），帧协议见 `src/protocol.ts`；loopback + Host + Origin 三重校验，LAN 需显式配置 `trustedHosts`。
 - **阅读代理**：外网页面由网关服务端抓取（12s 超时、仅 text/html），剥离 `<script>` 与 CSP 元素，`<a>`/`<form>`/`<iframe>` 改写回代理路由形成闭环导航，`<base>` 锚定相对子资源 —— X-Frame-Options 从此不再是面板的天花板。
-- **会话存续**：终端列表与 scrollback 日志持久化到 `~/.dsh-workbench/`，服务重启后自动恢复原会话，attach 即回放。
+- **会话存续**：终端列表与 scrollback 日志持久化到 `~/.dsh-workbench/`，服务重启后自动恢复原会话，attach 即回放；attach 还带上服务端保留的操作归属历史，重开面板不会看到空的动态流。
+- **被动式启动**：不向用户 shell 注入任何探测命令（旧实现写 `printf` 哨兵，会让 shell 多打一个提示符、并把那条命令写进 `~/.bash_history`）。启动只等 shell 自己把 banner 打完，且只有出现可读文本后才开始计静默窗口 —— Windows 登录 shell 要 1 秒多跑 profile。
 
 ## 开发与验证
 
@@ -161,7 +165,8 @@ npx pnpm test             # vitest run
 - [x] **Phase 1** — 工作台基座 + 人机共享终端（ConPTY / SSH / 哨兵 / 召唤 / 保护锁 / 输出熟化）
 - [x] 协同浏览器（Omnibox + 本地服务快捷卡片 + 安全文件预览）
 - [x] 亮暗双主题 + 全局快捷键 + 弹性收起动效
-- [ ] **Phase 2** — Git 协同面板（状态树 / Diff / 人机协同暂存与提交）
+- [x] Git 变更面板（状态树 + Diff + `workbench_git_status`）；暂存 / 提交仍待做
+- [ ] **Phase 2** — 人机协同暂存与提交
 - [ ] **Phase 3** — 受控浏览器协同（CDP 画面流 / DOM 树，人类可实时接管）
 - [ ] **Phase 4** — 对话与工作台分屏联动的高级协同体验
 

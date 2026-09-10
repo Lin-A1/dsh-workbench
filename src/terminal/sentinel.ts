@@ -12,12 +12,6 @@ export function createDoneToken(scope: string, seq: number): string {
   return `${SENTINEL_MARK}DONE_${safeScope}_${seq}_${rand}__`
 }
 
-export function createReadyToken(scope: string): string {
-  const safeScope = scope.replace(/[^A-Za-z0-9]/g, '_')
-  const rand = Math.random().toString(36).slice(2, 10)
-  return `${SENTINEL_MARK}READY_${safeScope}_${rand}__`
-}
-
 export function stripSentinel(text: string, token: string): { text: string; exitCode: number } | undefined {
   if (!TOKEN_CHARSET.test(token)) throw new Error(`sentinel token ${JSON.stringify(token)} is not regex-safe`)
   const re = new RegExp(`\\n?${token}:(\\d+)\\n?`)
@@ -25,15 +19,6 @@ export function stripSentinel(text: string, token: string): { text: string; exit
   if (match === null) return undefined
   const cleaned = text.slice(0, match.index) + text.slice(match.index + match[0].length)
   return { text: cleaned, exitCode: Number(match[1]) }
-}
-
-export function stripMarkerLines(text: string, token: string): string {
-  return text
-    .split('\n')
-    .filter(line => !line.includes(token))
-    .join('\n')
-    .replace(/^\n+/, '')
-    .replace(/\n+$/, '')
 }
 
 /**

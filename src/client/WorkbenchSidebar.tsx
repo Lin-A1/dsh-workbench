@@ -14,19 +14,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ActivityEntry, TerminalCollaborationView } from '../types.ts'
 import type { WorkbenchBrowserTab } from '../protocol.ts'
 import { ActivityFeed } from './ActivityFeed.tsx'
-import { BrowserView } from './browser/BrowserView.tsx'
-import { closeSidebarColumn, initResizeHandle, openSidebarColumn, toggleMaximize } from './column.ts'
-import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, MaximizeIcon, PlusIcon, ServerIcon, TerminalIcon } from './icons.tsx'
+import { BrowserView, DEFAULT_HOME_URL } from './browser/BrowserView.tsx'
+import { openWorkbench } from './column.ts'
+import { GitPanel } from './GitPanel.tsx'
+import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, PlusIcon, ServerIcon, TerminalIcon } from './icons.tsx'
 import { TerminalView } from './terminal/TerminalView.tsx'
 import { workbenchClient } from './ws.ts'
 
 export interface WorkbenchSidebarProps {
   sessionId?: string
-  closeDetails?: () => void
 }
 
-/** Rendered width of the new-tab menu, used to keep it inside the panel. */
-const PLUS_MENU_WIDTH = 214
+/**
+ * Rendered width of the new-tab menu. A measured constant, not the CSS
+ * `min-width`: the two differ by the box's padding and border, and anchoring on
+ * the smaller number hung the menu 4px past the panel's edge.
+ */
+const PLUS_MENU_WIDTH = 226
 
 interface TabShellProps {
   active: boolean
@@ -61,14 +65,33 @@ function TabShell({ active, label, title, icon, badge, onSelect, onClose }: TabS
   )
 }
 
-export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarProps): JSX.Element {
+/**
+ * A short chip title for an address the human navigated to. The hostname is
+ * what identifies a page at a glance in a narrow column; a local path shows its
+ * last segment, because its "hostname" is empty.
+ */
+function titleForUrl(raw: string): string {
+  if (!raw || raw === 'about:blank') return '新标签页'
+  try {
+    const url = new URL(raw)
+    if (url.protocol === 'file:') {
+      const segments = url.pathname.split('/').filter(Boolean)
+      return decodeURIComponent(segments[segments.length - 1] ?? '') || '本地文档'
+    }
+    return url.hostname || raw.slice(0, 32)
+  }
+  catch {
+    return raw.slice(0, 32)
+  }
+}
+
+export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Element {
   const [activeTabId, setActiveTabId] = useState('')
   const [terminals, setTerminals] = useState<TerminalCollaborationView[]>([])
   const [browserTabs, setBrowserTabs] = useState<WorkbenchBrowserTab[]>([])
   const [connected, setConnected] = useState(false)
   const [globalError, setGlobalError] = useState<string | undefined>(undefined)
   const [activityVersion, setActivityVersion] = useState(0)
-  const [maximized, setMaximized] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [plusMenuAt, setPlusMenuAt] = useState({ left: 16, top: 52 })
   const [gitTabOpen, setGitTabOpen] = useState(false)
@@ -79,7 +102,6 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
   const rootRef = useRef<HTMLDivElement | null>(null)
   const plusBtnRef = useRef<HTMLButtonElement | null>(null)
   const plusMenuRef = useRef<HTMLDivElement | null>(null)
-  const resizeHandleRef = useRef<HTMLDivElement | null>(null)
 
   // Live mirrors of the list state. The frame subscription reads these instead
   // of the React state, which lets it stay mounted for the whole session: the
@@ -127,6 +149,17 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
       ...(git ? ['git'] : []),
       ...(activity ? ['activity'] : []),
     ]
+    // Drop attribution history for terminals that are gone: the feed is keyed
+    // by terminal id, so a closed tab would otherwise keep contributing rows
+    // and inflate the tab badge forever.
+    const live = new Set(available)
+    let pruned = false
+    for (const id of activityLog.current.keys()) {
+      if (live.has(id)) continue
+      activityLog.current.delete(id)
+      pruned = true
+    }
+    if (pruned) setActivityVersion(v => v + 1)
     if (available.includes(activeTabRef.current)) return
     selectTab(available[0] ?? '')
   }, [selectTab])
@@ -134,6 +167,11 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
   useEffect(() => {
     workbenchClient.setSessionId(sessionId)
     workbenchClient.start()
+    // Attribution history belongs to the workspace, and the workspace changes
+    // with the session: carrying another conversation's rows into this one
+    // would attribute commands to terminals that are not even here.
+    activityLog.current.clear()
+    setActivityVersion(v => v + 1)
     // Re-ask on every mount/session change: the panel can be closed and
     // reopened, and a session switch changes what "the terminals" means.
     workbenchClient.send({ channel: 'workbench', type: 'hello', sessionId })
@@ -158,7 +196,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
           else if (frame.type === 'summon') {
             // The model opened a terminal/browser tab (or called workbench_show):
             // reveal the panel so its actions are visible to the human.
-            openSidebarColumn()
+            openWorkbench()
           }
           break
         }
@@ -189,6 +227,13 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
           else if (frame.type === 'busy') {
             updateTerminals(prev => prev.map(t => t.terminalId === frame.id ? { ...t, busy: frame.busy, busyActor: frame.actor } : t))
           }
+          else if (frame.type === 'attached') {
+            // The attach frame carries the attribution history the server still
+            // holds, which is what makes a reopened panel or a reconnected
+            // socket show the work that is already in the scrollback.
+            activityLog.current.set(frame.id, [...frame.activity])
+            setActivityVersion(v => v + 1)
+          }
           else if (frame.type === 'activity') {
             const list = activityLog.current.get(frame.id) ?? []
             list.push(frame.entry)
@@ -215,12 +260,6 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
       disposeState()
     }
   }, [sessionId, applyBrowserTabs, reconcileActiveTab, selectTab, updateTerminals])
-
-  useEffect(() => {
-    if (resizeHandleRef.current) {
-      return initResizeHandle(resizeHandleRef.current)
-    }
-  }, [])
 
   // The menu closes on an outside press and on Escape, so a stray click never
   // leaves it floating over the terminal.
@@ -258,23 +297,17 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
     if (button && root) {
       const b = button.getBoundingClientRect()
       const r = root.getBoundingClientRect()
-      const wanted = b.right - r.left - PLUS_MENU_WIDTH + 26
+      // Right-align with the panel's inner edge rather than the button: the
+      // window actions are the last row of the header, so the menu then sits
+      // flush under them and can never overflow the column.
+      const wanted = r.width - PLUS_MENU_WIDTH - 8
       setPlusMenuAt({
-        left: Math.max(8, Math.min(wanted, Math.max(8, r.width - PLUS_MENU_WIDTH - 8))),
+        left: Math.max(8, Math.min(wanted, r.width - 40)),
         top: b.bottom - r.top + 6,
       })
     }
     setPlusMenuOpen(true)
   }, [])
-
-  const handleClose = (): void => {
-    if (closeDetails) closeDetails()
-    closeSidebarColumn()
-  }
-
-  const handleToggleMaximize = (): void => {
-    setMaximized(toggleMaximize())
-  }
 
   const handleCreateTerminal = (): void => {
     setPlusMenuOpen(false)
@@ -287,11 +320,11 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
 
   const handleCreateBrowser = (): void => {
     setPlusMenuOpen(false)
+    // A real page, not an empty tab: "new browser tab" has to produce a browser.
     workbenchClient.send({
       channel: 'browser',
       type: 'open',
-      url: 'about:blank',
-      title: '新标签页',
+      url: DEFAULT_HOME_URL,
       sessionId,
     })
   }
@@ -311,11 +344,6 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
       <div className="wb-panel-card">
         {/* One flat tab strip: brand, every terminal and page, then the tools */}
         <div className="wb-sidebar-header">
-          <div className="wb-brand">
-            <span className="wb-brand-mark"><TerminalIcon size={12} /></span>
-            <span className="wb-brand-name">工作台</span>
-          </div>
-
           <div className="wb-unified-tabstrip">
             {terminals.map(t => (
               <TabShell
@@ -377,36 +405,26 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             ) : null}
           </div>
 
-          {/* Window-level actions, outside the scrolling strip so nothing clips */}
+          {/* Window-level actions, outside the scrolling strip so nothing clips.
+              The new-tab control is a labelled pill rather than a bare plus: the
+              sidebar draws an add-tab plus of its own one row above, and the two
+              mean different things (a new right-Sidebar tab type, versus a new
+              terminal or page inside this one). Two identical glyphs a row apart
+              read as one control with two behaviours. */}
           <div className="wb-window-actions">
             <button
               type="button"
-              className={`wb-icon-btn wb-plus-btn${plusMenuOpen ? ' active' : ''}`}
+              className={`wb-plus-btn${plusMenuOpen ? ' active' : ''}`}
               ref={plusBtnRef}
               onClick={() => (plusMenuOpen ? setPlusMenuOpen(false) : openPlusMenu())}
-              title="新建标签"
+              title="在工作台内新建终端或网页"
               aria-haspopup="menu"
               aria-expanded={plusMenuOpen}
             >
-              <PlusIcon size={13} />
+              <PlusIcon size={12} />
+              <span>新建</span>
             </button>
             <span className={`wb-dot ${connected ? 'ok' : 'dead'}`} title={connected ? '协同网关已连接' : '网关离线重连中'} />
-            <button
-              type="button"
-              className="wb-icon-btn"
-              onClick={handleToggleMaximize}
-              title={maximized ? '恢复分屏' : '全屏展开工作台'}
-            >
-              <MaximizeIcon size={13} />
-            </button>
-            <button
-              type="button"
-              className="wb-icon-btn"
-              onClick={handleClose}
-              title="收起工作台"
-            >
-              <CloseIcon size={14} />
-            </button>
           </div>
         </div>
 
@@ -431,30 +449,18 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
             <BrowserView
               tab={activeBrowser}
               onNavigate={(newUrl) => {
-                applyBrowserTabs(browserTabsRef.current.map(t => t.id === activeBrowser.id ? { ...t, url: newUrl } : t))
+                // The chip is the only place the human sees where this tab went,
+                // so it follows the address instead of staying "新标签页" for the
+                // rest of the session.
+                applyBrowserTabs(browserTabsRef.current.map(t => t.id === activeBrowser.id
+                  ? { ...t, url: newUrl, title: titleForUrl(newUrl) }
+                  : t))
               }}
             />
           ) : null}
 
           {activeTabId === 'git' ? (
-            <div className="wb-git-skeleton" style={{ marginTop: 40 }}>
-              <div className="wb-git-skel-head">
-                <span className="wb-git-skel-branch">
-                  <GitBranchIcon size={12} />
-                  <span className="wb-git-skel-bar" style={{ width: 76 }} />
-                </span>
-                <span className="wb-git-skel-pill" />
-                <span className="wb-git-skel-pill" />
-              </div>
-              {[64, 92, 48, 78, 56, 84].map((w, i) => (
-                <div className="wb-git-skel-row" key={i} style={{ animationDelay: `${i * 0.12}s` }}>
-                  <span className="wb-git-skel-badge" />
-                  <span className="wb-git-skel-bar" style={{ width: `${w}%` }} />
-                </div>
-              ))}
-              <p className="wb-empty-title" style={{ marginTop: 28 }}>Git 协同面板</p>
-              <p className="wb-hint">工作区状态树、Diff 查看器与人机协同暂存 / 提交 — 即将到来。</p>
-            </div>
+            <GitPanel sessionId={sessionId} active />
           ) : null}
 
           {activeTabId === 'activity' ? (
@@ -520,7 +526,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
                   Git 协同
                 </span>
                 <span className="wb-status-sep" />
-                <span className="wb-status-path">分支与变更视图 · 预览版</span>
+                <span className="wb-status-path">工作区变更与 Diff</span>
               </>
             ) : activeTabId === 'activity' ? (
               <>
@@ -549,10 +555,6 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
           </div>
         </div>
       </div>
-
-      {/* Split-width drag handle: a wide hit strip inside the card's left edge
-          (the details column clips anything that pokes outside it). */}
-      <div className="wb-resize-handle" ref={resizeHandleRef} title="拖拽调整分屏宽度 · 双击复位 48%" />
 
       {/* The new-tab menu lives here, not in the header: this root does not
           clip, so the popover cannot be swallowed by the strip's overflow. */}

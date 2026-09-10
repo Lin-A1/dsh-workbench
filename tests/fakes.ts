@@ -10,11 +10,9 @@ export class FakeShell implements ShellChannel {
 
   write(data: string): void {
     this.writes.push(data)
-    const ready = /printf '(__DSHWB_READY_[A-Za-z0-9_]+__)\\n'/.exec(data)?.[1]
     const done = /printf '(__DSHWB_DONE_[A-Za-z0-9_]+__):%s\\n'/.exec(data)?.[1]
-    if (ready !== undefined) this.emit(`welcome\n${ready}\n`)
     if (done !== undefined) this.emit(`command output\n${done}:0\n`)
-    if (ready === undefined && done === undefined) this.emit('raw input output\n')
+    else this.emit('raw input output\n')
     this.onWrite?.(data)
   }
 
@@ -48,6 +46,11 @@ export class FakeConnection implements TerminalConnection {
   closeCount = 0
 
   async openShell(): Promise<ShellChannel> {
+    // A real shell announces itself unprompted, and the session's startup
+    // capture is passive: it watches for that banner rather than writing a
+    // probe command. Emit one asynchronously, because the session can only
+    // subscribe after openShell resolves.
+    setTimeout(() => this.shell.emit('fake bash 1.0\n$ '), 0)
     return this.shell
   }
 

@@ -22,8 +22,6 @@ interface TermHandle {
   observer: ResizeObserver
   /** Re-measure the host and, when the grid changed, tell the shell its size. */
   applyFit: (force?: boolean) => void
-  /** Detachable `wb-resize` listener (the panel broadcasts its own width edits). */
-  onExternalResize: () => void
 }
 
 export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalViewProps): JSX.Element {
@@ -176,11 +174,12 @@ export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalView
         }
       }
 
+      // The column width is the harness's business now (its drag handle holds
+      // pointer capture), so this viewport watches its own box and nothing
+      // else: a width change of any origin arrives through this observer.
       const observer = new ResizeObserver(() => applyFit())
       observer.observe(host)
-      const onExternalResize = (): void => applyFit()
-      window.addEventListener('wb-resize', onExternalResize)
-      handle = { term, fit, observer, applyFit, onExternalResize }
+      handle = { term, fit, observer, applyFit }
       terms.current.set(activeTerminalId, handle)
     }
 
@@ -194,7 +193,6 @@ export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalView
     workbenchClient.send({ channel: 'terminal', type: 'attach', id: activeTerminalId })
 
     return () => {
-      if (handle) window.removeEventListener('wb-resize', handle.onExternalResize)
       handle?.term.element?.remove()
     }
   }, [activeTerminalId])

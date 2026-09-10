@@ -3,7 +3,7 @@
  * @module dsh-workbench/render
  */
 
-import type { ActivityEntry, ReadResult, SendResult, TerminalSnapshot } from './types.ts'
+import type { ActivityEntry, GitFileChange, ReadResult, SendResult, TerminalSnapshot } from './types.ts'
 
 const TRUNCATED = '\n[output truncated]'
 const RENDER_ACTIVITY_LIMIT = 80
@@ -66,4 +66,34 @@ export function renderList(
     return `${t.terminalId}${name} ${target} ${statusText(t.status)}${unread}${act}`
   }).join('\n')
   return boundText(text, maxBytes)
+}
+
+/** What the `workbench_git_status` tool returns, in tool-output terms. */
+export interface GitStatusSummary {
+  repository: boolean
+  branch: string | null
+  ahead: number
+  behind: number
+  additions: number
+  deletions: number
+  files: readonly GitFileChange[]
+  error?: string
+}
+
+/** One changed path as `XY path`, in the layout `git status --short` uses. */
+function gitFileLine(file: GitFileChange): string {
+  return ` ${file.x}${file.y} ${file.path}`
+}
+
+export function renderGitStatus(value: GitStatusSummary): string {
+  if (!value.repository) {
+    return value.error
+      ? `not a Git worktree: ${value.error}`
+      : 'not a Git worktree'
+  }
+  const branch = value.branch ?? '(no branch)'
+  const tracking = value.ahead > 0 || value.behind > 0 ? ` ahead ${value.ahead}, behind ${value.behind}` : ''
+  const head = `branch ${branch}${tracking} · ${value.files.length} changed file(s) · +${value.additions} −${value.deletions}`
+  if (value.files.length === 0) return `${head}\n(clean worktree)`
+  return `${head}\n${value.files.map(gitFileLine).join('\n')}`
 }

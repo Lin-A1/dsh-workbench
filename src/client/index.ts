@@ -1,30 +1,29 @@
 /**
- * dsh-workbench browser half. Registers the collaborative workbench inside
- * the right-hand details column, with a toggle button in session utilities.
+ * dsh-workbench browser half: registers the collaborative workbench as a tab
+ * type in the harness right Sidebar.
  * @module dsh-workbench/client
  */
 
 import { createElement } from 'react'
 import xtermCss from '@xterm/xterm/css/xterm.css'
-import { closeSidebarColumn, installAdoption, isSidebarOpen, setLayoutFace, toggleMaximize, toggleSidebarColumn } from './column.ts'
+import { WORKBENCH_KIND, openWorkbench, setSidebarRight, toggleWorkbench, type SidebarRightFace } from './column.ts'
 import { HeaderToggleAction } from './HeaderToggleAction.tsx'
 import { workbenchClient } from './ws.ts'
 import { WorkbenchSidebar } from './WorkbenchSidebar.tsx'
 
-export const inject = ['slots', 'layout']
+export const inject = ['slots', 'sidebarRight', 'sidebarRightTabs']
+
+/** This implementation's identity in the tab system: the key its body registers under. */
+export const WORKBENCH_ID = 'dsh-workbench'
 
 /* ----------------------------------------------------------------------------
  * Design system
  *
- * The harness AppFrame rewrites inline grid styles on every render and clamps
- * the details track to 520px (ui-layout columns.ts). Stylesheet !important
- * outranks inline styles in the cascade, so the workbench width is governed
- * from here — keyed on body classes and one CSS variable written by
- * client/column.ts — never by touching harness nodes.
- *
- * Palette discipline: the harness paints neutral blacks (body #151517,
- * sidebar #1b1b1c, near-white text). Every workbench tone stays on that
- * neutral axis — no blue-cast grays — so the card reads as the same app.
+ * The harness right Sidebar owns the column, its tab strip, and its panel
+ * chrome; everything below styles only the workbench's own surfaces inside one
+ * tab body. Palette discipline: the harness paints neutral blacks (body
+ * #151517, sidebar #1b1b1c, near-white text). Every workbench tone stays on
+ * that neutral axis — no blue-cast grays — so the card reads as the same app.
  * Color is reserved for state (green ok dot, amber reconnect) and data.
  * ------------------------------------------------------------------------- */
 const WORKBENCH_SIDEBAR_CSS = `${xtermCss}
@@ -64,33 +63,7 @@ body:not([data-ds-dark-theme]) {
   --wb-red: #cf222e;
 }
 
-/* ---- Frame override: the workbench track owns the right half ---------- */
-body.wb-sidebar-opened [class*='frame'] {
-  grid-template-columns: 280px minmax(0, 1fr) min(var(--wb-details-w, 48vw), 62vw) !important;
-  /* The harness's eased grid transition deadlocks on var()-based targets and
-     pins the track at its start value; width changes here are instant.
-     The dismiss ease-out below re-animates on exit without re-deadlocking
-     the var() target, so close feels sprung while open/resize stay instant. */
-  transition: none !important;
-}
-body.wb-sidebar-opened.wb-closing [class*='frame'] {
-  grid-template-columns: 280px minmax(0, 1fr) min(var(--wb-details-w, 48vw), 62vw) !important;
-  transition: grid-template-columns 0.24s cubic-bezier(0.32, 0.72, 0.24, 1) !important;
-}
-body.wb-sidebar-opened.wb-maximized [class*='frame'] {
-  grid-template-columns: 280px 0px calc(100vw - 280px) !important;
-}
-body.wb-sidebar-opened.wb-maximized [class*='detailsCol'] {
-  width: calc(100vw - 280px) !important;
-}
-body.wb-resizing [class*='frame'] {
-  transition: none !important;
-}
-body.wb-sidebar-opened [data-side='details'] {
-  display: none !important;
-}
-
-/* ---- Shell: transparent gap + floating card -----------------------------*/
+/* ---- Shell: the tab body fills the harness panel ------------------------*/
 .wb-sidebar-root {
   display: flex;
   flex-direction: column;
@@ -98,7 +71,6 @@ body.wb-sidebar-opened [data-side='details'] {
   height: 100%;
   min-height: 0;
   position: relative;
-  padding: 10px 12px 10px 16px;
   box-sizing: border-box;
   background: var(--wb-page);
   color: var(--wb-text-2);
@@ -108,13 +80,6 @@ body.wb-sidebar-opened [data-side='details'] {
   -webkit-font-smoothing: antialiased;
   overflow: visible;
 }
-body.wb-sidebar-opened .wb-sidebar-root {
-  animation: wb-root-in 0.16s ease-out;
-}
-@keyframes wb-root-in {
-  from { opacity: 0.4; }
-  to { opacity: 1; }
-}
 
 .wb-panel-card {
   display: flex;
@@ -122,9 +87,7 @@ body.wb-sidebar-opened .wb-sidebar-root {
   flex: 1;
   min-height: 0;
   background: var(--wb-card);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -146,107 +109,6 @@ body.wb-sidebar-opened .wb-sidebar-root {
   outline: 2px solid rgba(122, 162, 255, 0.5);
   outline-offset: 1px;
   border-radius: 4px;
-}
-
-/* ---- Split drag handle ---------------------------------------------------
-   The details column clips everything outside itself, so a hit strip that
-   straddled the border (left: -20px) was only ~8px wide in practice — the
-   rest was clipped away. The strip now lives entirely inside the panel's left
-   gutter, so the whole 20px is grabbable. ---------------------------------- */
-.wb-resize-handle {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 20px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 60;
-  background: transparent;
-  touch-action: none;
-}
-.wb-resize-handle::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 15px;
-  width: 1px;
-  background: transparent;
-  transition: background 0.15s ease;
-}
-/* Grip pill: permanently visible as an affordance so users immediately know
-   the edge is draggable, expanding and highlighting on hover/drag. */
-.wb-resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 5px;
-  width: 5px;
-  height: 56px;
-  transform: translateY(-50%);
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  opacity: 0.42;
-  transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
-}
-.wb-sidebar-root:hover .wb-resize-handle::after {
-  opacity: 0.75;
-}
-.wb-sidebar-root:hover .wb-resize-handle::before {
-  background: rgba(255, 255, 255, 0.08);
-}
-.wb-resize-handle:hover::before,
-body.wb-resizing .wb-resize-handle::before {
-  background: rgba(255, 255, 255, 0.38);
-}
-.wb-resize-handle:hover::after,
-body.wb-resizing .wb-resize-handle::after {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.28);
-  border-color: rgba(255, 255, 255, 0.4);
-  transform: translateY(-50%) scaleX(1.15);
-}
-body.wb-resizing { cursor: col-resize; user-select: none; }
-
-/* ---- Header: brand + tabs + window actions ------------------------------*/
-.wb-sidebar-header {
-  display: flex;
-  align-items: center;
-  height: 44px;
-  min-height: 44px;
-  padding: 0 8px 0 12px;
-  flex: none;
-  gap: 6px;
-  border-bottom: 1px solid var(--wb-line);
-}
-
-.wb-brand {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex: none;
-  padding-right: 10px;
-  margin-right: 4px;
-  border-right: 1px solid var(--wb-line);
-  user-select: none;
-}
-.wb-brand-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  background: var(--wb-active);
-  color: var(--wb-text-2);
-}
-.wb-brand-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--wb-text-1);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
 }
 
 .wb-unified-tabstrip {
@@ -355,18 +217,23 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 
 /* ---- New-tab button + popover -------------------------------------------
    The menu anchors to the panel root (not the header): the header strip
-   scrolls and the card clips, so a dropdown parented there never appeared. */
+   scrolls and the card clips, so a dropdown parented there never appeared.
+   The button carries a label, because the sidebar draws an add-tab plus of
+   its own one row above and a second bare plus reads as the same control. */
 .wb-plus-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 25px;
+  gap: 5px;
   height: 25px;
+  padding: 0 9px 0 7px;
   border: none;
   background: transparent;
   color: var(--wb-text-3);
   border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
 }
 .wb-plus-btn:hover, .wb-plus-btn.active {
@@ -731,7 +598,8 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   display: block;
 }
 
-/* Start page: replaces the iframe until a URL is committed (no dead white) */
+/* Start page: the fallback for a tab with no address, so a blank tab never
+   renders as a dead white rectangle. */
 .wb-start-page {
   flex: 1;
   min-height: 0;
@@ -764,82 +632,6 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   font-size: 12px;
   color: var(--wb-text-3);
 }
-.wb-start-chips {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.wb-start-chip {
-  display: inline-flex;
-  align-items: center;
-  height: 27px;
-  padding: 0 13px;
-  background: var(--wb-hover);
-  border: 1px solid var(--wb-line);
-  border-radius: 999px;
-  color: var(--wb-text-2);
-  font-size: 11.5px;
-  font-family: var(--wb-font-mono);
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-.wb-start-chip:hover {
-  background: var(--wb-active);
-  border-color: var(--wb-line-strong);
-  color: var(--wb-text-1);
-}
-
-/* ---- Start page card grid: bento-style quick launch --------------------- */
-.wb-start-group-label {
-  margin: 0 0 12px 0;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--wb-text-3);
-}
-.wb-start-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  width: min(440px, 92%);
-}
-.wb-start-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 10px 12px;
-  background: var(--wb-card);
-  border: 1px solid var(--wb-line);
-  border-radius: 9px;
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
-}
-.wb-start-card:hover {
-  border-color: var(--wb-line-strong);
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-}
-.wb-start-card:active { transform: translateY(0); }
-.wb-start-card-port {
-  font-family: var(--wb-font-mono);
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--wb-text-1);
-}
-.wb-start-card-label {
-  font-size: 11px;
-  color: var(--wb-text-2);
-}
-.wb-start-card-desc {
-  font-size: 10px;
-  color: var(--wb-text-3);
-}
-
 /* ---- Activity timeline ------------------------------------------------------*/
 .wb-activity-container {
   flex: 1;
@@ -857,77 +649,194 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 .wb-empty-title { font-size: 13px; color: var(--wb-text-2); font-weight: 500; margin: 0 0 6px 0; }
 .wb-empty-feed .wb-hint { font-size: 12px; color: var(--wb-text-3); margin: 0 auto; line-height: 1.65; max-width: 300px; }
 
-/* ---- Git panel skeleton: preview of the coming worktree panel -----------*/
-.wb-git-skeleton {
-  max-width: 420px;
-  margin-left: auto;
-  margin-right: auto;
-  padding: 20px 22px 24px;
-  background: var(--wb-card);
-  border: 1px solid var(--wb-line);
-  border-radius: 10px;
-  text-align: center;
+/* ---- Git panel: branch header, changed paths, diff viewer ----------------*/
+.wb-git-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--wb-inset);
 }
-.wb-git-skel-head {
+.wb-git-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  padding: 8px 10px;
+  background: var(--wb-card);
+  border-bottom: 1px solid var(--wb-line);
+  flex: none;
 }
-.wb-git-skel-branch {
+.wb-git-branch {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--wb-line);
+  min-width: 0;
+  padding: 3px 9px;
+  border: 1px solid var(--wb-line-strong);
   border-radius: 6px;
+  color: var(--wb-text-2);
+  background: var(--wb-hover);
+}
+.wb-git-branch-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--wb-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
+}
+.wb-git-tracking { display: inline-flex; gap: 5px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.wb-git-ahead { color: var(--wb-green); }
+.wb-git-behind { color: var(--wb-amber); }
+.wb-git-numstat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wb-git-add { color: var(--wb-green); }
+.wb-git-del { color: var(--wb-red); }
+.wb-git-count { color: var(--wb-text-3); }
+.wb-git-refresh { flex: none; }
+
+.wb-git-notice {
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 12px;
   color: var(--wb-text-3);
+  font-family: var(--wb-font-mono);
+  word-break: break-word;
 }
-.wb-git-skel-bar {
-  display: inline-block;
-  height: 8px;
+.wb-git-notice-error { color: var(--wb-red); font-family: inherit; }
+.wb-git-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+}
+.wb-git-empty .wb-hint { font-size: 12px; color: var(--wb-text-3); margin: 0; line-height: 1.7; max-width: 300px; }
+.wb-git-empty code {
+  font-family: var(--wb-font-mono);
+  background: var(--wb-hover);
   border-radius: 4px;
-  background: linear-gradient(90deg, var(--wb-hover) 25%, var(--wb-active) 50%, var(--wb-hover) 75%);
-  background-size: 200% 100%;
-  animation: wb-skel-shimmer 1.6s ease-in-out infinite;
+  padding: 1px 5px;
+  color: var(--wb-text-2);
 }
-.wb-git-skel-pill {
-  width: 34px;
-  height: 18px;
-  border-radius: 9px;
-  background: linear-gradient(90deg, var(--wb-hover) 25%, var(--wb-active) 50%, var(--wb-hover) 75%);
-  background-size: 200% 100%;
-  animation: wb-skel-shimmer 1.6s ease-in-out infinite;
+
+/* The changed-path list keeps a floor so a long diff can never hide it. */
+.wb-git-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
-.wb-git-skel-row {
+.wb-git-files {
+  flex: 0 1 auto;
+  min-height: 96px;
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--wb-line);
+}
+.wb-git-file {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
+  gap: 9px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
   border-radius: 6px;
-  background: var(--wb-hover);
-  margin-bottom: 6px;
+  cursor: pointer;
   text-align: left;
-  opacity: 0;
-  animation: wb-skel-row-in 0.5s ease-out forwards;
+  font-family: inherit;
+  transition: background 0.1s ease;
 }
-.wb-git-skel-badge {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, var(--wb-hover) 25%, var(--wb-active) 50%, var(--wb-hover) 75%);
-  background-size: 200% 100%;
-  animation: wb-skel-shimmer 1.6s ease-in-out infinite;
+.wb-git-file:hover { background: var(--wb-hover); }
+.wb-git-file.active { background: var(--wb-active); }
+.wb-git-badge {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-family: var(--wb-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
-@keyframes wb-skel-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+.wb-git-badge.tone-modified { color: var(--wb-amber); background: rgba(217, 169, 78, 0.14); }
+.wb-git-badge.tone-added { color: var(--wb-green); background: rgba(70, 201, 140, 0.14); }
+.wb-git-badge.tone-deleted { color: var(--wb-red); background: rgba(239, 111, 97, 0.14); }
+.wb-git-badge.tone-untracked { color: var(--wb-text-3); background: var(--wb-hover); }
+.wb-git-badge.tone-renamed { color: #79b8ff; background: rgba(121, 184, 255, 0.14); }
+.wb-git-badge.tone-conflict { color: #ffa198; background: rgba(239, 111, 97, 0.2); }
+.wb-git-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--wb-font-mono);
+  font-size: 11.5px;
+  color: var(--wb-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Paths read from the filename inward, so the tail is what gets room. */
+  direction: rtl;
+  text-align: left;
 }
-@keyframes wb-skel-row-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+.wb-git-diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+.wb-git-diff-path {
+  flex: none;
+  padding: 6px 12px;
+  font-family: var(--wb-font-mono);
+  font-size: 11px;
+  color: var(--wb-text-3);
+  background: var(--wb-card);
+  border-bottom: 1px solid var(--wb-line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.wb-git-diff-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 0;
+  font-family: var(--wb-font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  background: var(--wb-inset);
+}
+.wb-git-diff-line {
+  padding: 0 12px;
+  white-space: pre;
+  color: var(--wb-text-2);
+}
+.wb-git-diff-line.add { color: #7ee2a8; background: rgba(70, 201, 140, 0.09); }
+.wb-git-diff-line.del { color: #ffa198; background: rgba(239, 111, 97, 0.09); }
+.wb-git-diff-line.hunk { color: #79b8ff; background: rgba(121, 184, 255, 0.08); }
+.wb-git-diff-line.meta { color: var(--wb-text-3); }
+body:not([data-ds-dark-theme]) .wb-git-diff-line.add { color: #116329; }
+body:not([data-ds-dark-theme]) .wb-git-diff-line.del { color: #a40e26; }
 
 .wb-activity-list {
   display: flex;
@@ -1106,36 +1015,73 @@ interface SlotsService {
   register(cell: Record<string, unknown>, component: unknown): () => void
 }
 
-interface LayoutService {
-  openDetails(): void
-  closeDetails(): void
+/** Stage one of a tab type's registration, as `ctx.sidebarRightTabs` exposes it. */
+interface SidebarRightTabsFace {
+  register(definition: {
+    id: string
+    kind: string
+    title: (address: string) => string
+    guide?: readonly { order: number; title: () => string; description?: () => string }[]
+  }): () => void
 }
 
 interface ClientContext {
   slots: SlotsService
-  layout?: LayoutService
+  sidebarRight?: SidebarRightFace
+  sidebarRightTabs?: SidebarRightTabsFace
+  effect?(callback: () => (() => void) | void, label?: string): void
 }
 
 export function apply(ctx: ClientContext): void {
   injectStyle()
   workbenchClient.start()
-  setLayoutFace(ctx.layout)
-  installAdoption()
+  setSidebarRight(ctx.sidebarRight)
   installGlobalShortcuts()
 
-  // 1. Details column registration (Session-attached right sidebar workspace)
-  try {
-    ctx.slots.inject('details', () => ctx.slots.register({
-      name: 'details',
-      priority: -1,
-      inject: () => ({ closeDetails: () => closeSidebarColumn() }),
-    }, SidebarWrapper))
+  // Both faces are how the workbench reaches the screen, so a missing one is
+  // reported instead of swallowed: the previous implementation called an
+  // optional-chained panel action that a harness update had removed, and the
+  // whole panel silently stopped mounting with nothing in the console.
+  if (ctx.sidebarRightTabs === undefined) {
+    console.warn('[dsh-workbench] sidebarRightTabs service is missing: the workbench tab cannot register')
   }
-  catch (err) {
-    console.warn(`[dsh-workbench] details registration error: ${err instanceof Error ? err.message : String(err)}`)
+  else {
+    // Stage one: what the tab type is. The harness owns the strip, the expand
+    // control, and the column geometry; this only names the type.
+    ctx.effect?.(() => ctx.sidebarRightTabs!.register({
+      id: WORKBENCH_ID,
+      kind: WORKBENCH_KIND,
+      title: () => '工作台',
+      guide: [{
+        order: 20,
+        title: () => '协同工作台',
+        description: () => '与人机共享的终端、网页预览、Git 变更与操作动态',
+      }],
+    }), 'dsh-workbench: tab type')
   }
 
-  // 2. Header utility button (Toggle right sidebar in active session header)
+  if (ctx.sidebarRight === undefined) {
+    console.warn('[dsh-workbench] sidebarRight service is missing: the workbench cannot open itself')
+  }
+
+  // Stage two: the body, keyed by the definition's own id. The injected
+  // sessionId is the conversation the tab belongs to, and it is what scopes
+  // every terminal, browser tab, and Git read this panel asks for.
+  try {
+    ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+      name: 'sidebar.right.pane.tab',
+      key: WORKBENCH_ID,
+      inject: (sessionId?: string) => ({ sessionId }),
+    }, WorkbenchTabBody))
+  }
+  catch (err) {
+    console.warn(`[dsh-workbench] tab body registration error: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  // The conversation header keeps a workbench button: the harness's own expand
+  // control folds the whole column, while this one is about the workbench tab
+  // specifically — bring it forward, or fold the column when it is already the
+  // visible tab.
   try {
     ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
       name: 'conversation.session.header.utilities',
@@ -1150,9 +1096,8 @@ export function apply(ctx: ClientContext): void {
 
 /**
  * Global keyboard shortcuts so keyboard-first operators never reach for the
- * mouse: Ctrl+\ (or Cmd+J on macOS) toggles the workbench panel, and
- * Ctrl+Shift+M (Cmd+Ctrl+M) maximizes/restores it. Skips keystrokes aimed at
- * text inputs so typing in the chat or terminal never triggers a toggle.
+ * mouse: Ctrl+\ (or Cmd+J on macOS) brings the workbench tab forward, or folds
+ * the column when it is already showing.
  */
 function installGlobalShortcuts(): void {
   if (typeof window === 'undefined') return
@@ -1164,27 +1109,22 @@ function installGlobalShortcuts(): void {
     // Ctrl+\ toggles the panel (VS Code terminal toggle convention)
     if (e.key === '\\') {
       e.preventDefault()
-      toggleSidebarColumn()
+      toggleWorkbench()
       return
     }
     // Cmd+J is the mac-native panel toggle
     if (isMac && e.key.toLowerCase() === 'j' && !e.shiftKey) {
       e.preventDefault()
-      toggleSidebarColumn()
-      return
-    }
-    // Ctrl+Shift+M maximizes / restores
-    if (e.shiftKey && e.key.toUpperCase() === 'M' && isSidebarOpen()) {
-      e.preventDefault()
-      toggleMaximize()
+      toggleWorkbench()
     }
   }
   window.addEventListener('keydown', onKey)
 }
 
-function SidebarWrapper(props: { closeDetails?: () => void; sessionId?: string }): JSX.Element {
-  return createElement(WorkbenchSidebar, {
-    sessionId: props.sessionId,
-    closeDetails: props.closeDetails,
-  })
+/**
+ * The registered tab body. The harness composes the slot props; the only one
+ * this panel needs is the session the tab is bound to.
+ */
+function WorkbenchTabBody(props: { sessionId?: string }): JSX.Element {
+  return createElement(WorkbenchSidebar, { sessionId: props.sessionId })
 }

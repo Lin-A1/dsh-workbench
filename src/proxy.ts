@@ -106,3 +106,68 @@ export function extractRedirectTarget(raw: string, currentUrl: string): string |
   if (literal && literal[1] !== currentUrl) return literal[1]
   return undefined
 }
+
+/**
+ * True when `to` is the same destination on a less secure scheme.
+ *
+ * A reader proxy must not follow these: it is a security retreat on any
+ * network, and frequently a dead end on this one. www.baidu.com answers an
+ * HTTPS fetch with a 227-byte `location.href.replace("https://","http://")`
+ * shell, and its downgraded host resolves into the local proxy's fake-IP range
+ * where a port-80 connection gets an empty reply — so following the bounce both
+ * weakened the request and discarded a page already in hand. (Plain HTTP is not
+ * blocked here in general; example.com, baidu.com, and m.baidu.com all answer
+ * over http.)
+ * @param from - URL the page was served from.
+ * @param to - URL the page asks to navigate to.
+ */
+export function isProtocolDowngrade(from: string, to: string): boolean {
+  try {
+    return new URL(from).protocol === 'https:' && new URL(to).protocol === 'http:'
+  }
+  catch {
+    return false
+  }
+}
+
+/** True when the page IS nothing but a protocol-downgrade stub. */
+export function isDowngradeStub(html: string, pageUrl: string): boolean {
+  const target = extractRedirectTarget(html, pageUrl)
+  return target !== undefined && isProtocolDowngrade(pageUrl, target)
+}
+
+/**
+ * The mobile host for a URL, or `undefined` when there is nothing to try.
+ *
+ * Sites that refuse their desktop HTTPS page commonly still serve the mobile
+ * one, and a reader pane is a narrow column anyway — baidu is exactly this
+ * shape (`www` → downgrade stub, `m` → the real page).
+ */
+export function mobileHostVariant(rawUrl: string): string | undefined {
+  try {
+    const url = new URL(rawUrl)
+    const host = url.hostname.toLowerCase()
+    if (host.startsWith('m.') || host.startsWith('wap.') || host.startsWith('mobile.')) return undefined
+    const bare = host.replace(/^www\./, '')
+    if (bare.length === 0) return undefined
+    const candidate = new URL(url.toString())
+    candidate.hostname = `m.${bare}`
+    return candidate.toString()
+  }
+  catch {
+    return undefined
+  }
+}
+
+/**
+ * Prefix a fixed notice bar onto an already-cooked reader document, so the
+ * human can see that what they are reading is not the page they asked for.
+ */
+export function withReaderNotice(html: string, text: string): string {
+  const bar = `<div style="position:fixed;top:0;left:0;right:0;z-index:2147483647;`
+    + 'font:12px/1.5 -apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;'
+    + 'padding:7px 12px;background:#1f2328;color:#d9dadd;border-bottom:1px solid rgba(255,255,255,.14)">'
+    + `${text.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] ?? c)}</div>`
+  if (/<body\b[^>]*>/i.test(html)) return html.replace(/<body\b[^>]*>/i, m => `${m}${bar}`)
+  return `${bar}${html}`
+}

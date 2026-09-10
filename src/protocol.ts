@@ -4,7 +4,7 @@
  * @module dsh-workbench/protocol
  */
 
-import type { ActivityEntry, TerminalCollaborationView, TerminalKind } from './types.ts'
+import type { ActivityEntry, GitStatusView, TerminalCollaborationView, TerminalKind } from './types.ts'
 
 /** Connection profile definition. */
 export interface TerminalProfile {
@@ -61,22 +61,24 @@ export type WorkbenchClientFrame =
   | { channel: 'browser'; type: 'close'; id: string }
   | { channel: 'browser'; type: 'list'; sessionId?: string }
   | { channel: 'git'; type: 'status'; sessionId?: string; cwd?: string }
+  | { channel: 'git'; type: 'diff'; sessionId?: string; cwd?: string; path: string }
 
 /** Server -> Client Frames */
 export type WorkbenchServerFrame =
   | { channel: 'workbench'; type: 'hello'; terminals: TerminalCollaborationView[]; profiles: TerminalProfile[]; browserTabs?: WorkbenchBrowserTab[]; sessionId?: string }
   | { channel: 'workbench'; type: 'summon' }
   | { channel: 'terminal'; type: 'terminals'; terminals: TerminalCollaborationView[] }
-  | { channel: 'terminal'; type: 'attached'; id: string; view: TerminalCollaborationView; replay: ReplayTail }
+  | { channel: 'terminal'; type: 'attached'; id: string; view: TerminalCollaborationView; replay: ReplayTail; activity: ActivityEntry[] }
   | { channel: 'terminal'; type: 'detached'; id: string }
   | { channel: 'terminal'; type: 'output'; id: string; text: string }
   | { channel: 'terminal'; type: 'activity'; id: string; entry: ActivityEntry }
-  | { channel: 'terminal'; type: 'opened'; view: TerminalCollaborationView; motd: string }
+  | { channel: 'terminal'; type: 'opened'; view: TerminalCollaborationView }
   | { channel: 'terminal'; type: 'busy'; id: string; busy: boolean; actor?: 'model' | 'human' }
   | { channel: 'terminal'; type: 'closed'; id: string; outcome: 'closed' | 'already-closing' }
   | { channel: 'terminal'; type: 'profiles'; profiles: TerminalProfile[] }
   | { channel: 'browser'; type: 'tabs'; tabs: WorkbenchBrowserTab[] }
   | { channel: 'browser'; type: 'opened'; tab: WorkbenchBrowserTab }
   | { channel: 'browser'; type: 'closed'; id: string }
-  | { channel: 'git'; type: 'status'; status: unknown }
+  | { channel: 'git'; type: 'status'; status: GitStatusView | null; error?: string }
+  | { channel: 'git'; type: 'diff'; path: string; diff: string; error?: string }
   | { channel: 'error'; message: string }

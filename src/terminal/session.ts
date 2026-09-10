@@ -7,18 +7,34 @@
 
 import type { ActivityEntry, ActivitySource, ReadResult, SendResult, ShellChannel, TerminalCollaborationView, TerminalConnection, TerminalKind, TerminalSnapshot, TerminalStatus } from '../types.ts'
 import { sanitizeTerminalText } from './ansi.ts'
-import { createDoneToken, createReadyToken, createSentinelLineFilter, stripMarkerLines, stripSentinel } from './sentinel.ts'
+import { createDoneToken, createSentinelLineFilter, stripSentinel } from './sentinel.ts'
 
 const encoder = new TextEncoder()
 const ACTIVITY_TEXT_LIMIT = 200
 const ACTIVITY_RING_LIMIT = 50
 const HUMAN_COALESCE_MS = 600
 
+/** Silence after the last startup byte that counts as "the banner is done". */
+export const DEFAULT_STARTUP_QUIET_MS = 300
+/** Hard ceiling on waiting for a banner, whatever the connect timeout says. */
+const STARTUP_MAX_WAIT_MS = 2500
+
+/**
+ * Has the shell said anything a human could read yet? Escape sequences and
+ * the payloads inside them do not count — an OSC window title carries the
+ * shell's own path, which would otherwise pass for a banner.
+ */
+function hasReadableLine(display: string): boolean {
+  return sanitizeTerminalText(display).length > 0
+}
+
 export interface SessionOptions {
   echo: boolean
   maxScrollbackBytes: number
   cols: number
   rows: number
+  /** Silence window that ends startup capture; tests lower it to stay fast. */
+  startupQuietMs: number
 }
 
 export interface SendRequest {
@@ -92,19 +108,21 @@ export class WorkbenchTerminalSession {
     },
     connection: TerminalConnection,
     options: SessionOptions,
-    probeTimeoutMs: number,
-  ): Promise<{ session: WorkbenchTerminalSession; motd: string }> {
+    startupTimeoutMs: number,
+  ): Promise<{ session: WorkbenchTerminalSession; banner: Promise<string> }> {
     const shell = await connection.openShell()
     const session = new WorkbenchTerminalSession(id, meta, connection, shell, options)
-    try {
-      const motd = await session.probe(probeTimeoutMs)
+    // The banner resolves in the background on purpose. A Windows login shell
+    // spends over a second in its profile scripts before saying anything, and
+    // making the panel wait that long to show a tab would be paying a
+    // model-facing nicety out of the human's latency budget. The promise never
+    // rejects: a shell that dies while starting up is already visible through
+    // the session's own status and close event.
+    const banner = session.captureStartup(startupTimeoutMs).then((text) => {
       session.markModelSeen()
-      return { session, motd }
-    }
-    catch (error) {
-      connection.close()
-      throw error
-    }
+      return text
+    }, () => '')
+    return { session, banner }
   }
 
   private get pos(): number {
@@ -147,33 +165,58 @@ export class WorkbenchTerminalSession {
     return { text: this.buf.slice(rel), truncated: false }
   }
 
-  private probe(timeoutMs: number): Promise<string> {
-    const token = createReadyToken(this.id)
-    const prefix = this.options.echo ? '' : 'stty -echo 2>/dev/null || true; '
-    const mark = this.pos
+  /**
+   * Wait for the shell to finish announcing itself, then return what it said.
+   *
+   * Deliberately passive. The previous version wrote a sentinel `printf` into
+   * the shell to prove it was live; the shell answered with a fresh prompt that
+   * the sentinel line filter could not eat (it only drops lines carrying the
+   * marker), so every newly opened terminal showed its banner twice — and the
+   * injected command was appended to the user's shell history. A PTY is live
+   * the moment it spawns, so the only thing worth waiting for is the banner it
+   * prints unprompted: watch for silence instead of poking it.
+   *
+   * Resolves with the sanitized startup text, which is empty for a shell that
+   * says nothing until spoken to (a pipe-spawned bash).
+   */
+  private captureStartup(timeoutMs: number): Promise<string> {
+    const maxWait = Math.max(1, Math.min(timeoutMs, STARTUP_MAX_WAIT_MS))
     return new Promise((resolve, reject) => {
-      const onData = (): void => {
-        const { text } = this.sliceFrom(mark)
-        if (!text.includes(token)) return
+      let quiet: NodeJS.Timeout | undefined
+      const settle = (): void => {
         cleanup()
-        resolve(sanitizeTerminalText(stripMarkerLines(text, token)))
+        resolve(sanitizeTerminalText(this.displayBuf))
+      }
+      const onData = (): void => {
+        // A ConPTY shell announces itself in pieces: Git Bash first writes a
+        // burst of pure mode-setting escapes, then spends a few hundred
+        // milliseconds in /etc/profile, then prints the banner. Silence only
+        // means "done" once there is something readable to have finished —
+        // otherwise the window closes during the profile run and the banner
+        // lands after the capture already gave up on it.
+        if (!hasReadableLine(this.displayBuf)) return
+        if (quiet !== undefined) clearTimeout(quiet)
+        quiet = setTimeout(settle, this.options.startupQuietMs)
       }
       const onClose = (): void => {
         cleanup()
-        reject(new Error(`terminal ${this.id}: shell closed during startup`))
+        // Dying before saying anything means the shell never came up; dying
+        // after saying something leaves a banner worth keeping.
+        if (this.displayBuf.length > 0) resolve(sanitizeTerminalText(this.displayBuf))
+        else reject(new Error(`terminal ${this.id}: shell closed during startup`))
       }
-      const timer = setTimeout(() => {
-        cleanup()
-        resolve(sanitizeTerminalText(stripMarkerLines(this.sliceFrom(mark).text, token)))
-      }, timeoutMs)
+      const timer = setTimeout(settle, maxWait)
       const cleanup = (): void => {
         clearTimeout(timer)
+        if (quiet !== undefined) clearTimeout(quiet)
         this.dataListeners.delete(onData)
         this.closeListeners.delete(onClose)
       }
       this.dataListeners.add(onData)
       this.closeListeners.add(onClose)
-      this.shell.write(`${prefix}printf '${token}\\n'\n`)
+      // The only write startup still owns: a caller that asked for a silent
+      // line discipline gets the mode change, nothing else.
+      if (!this.options.echo) this.shell.write('stty -echo 2>/dev/null || true\n')
     })
   }
 
@@ -254,7 +297,7 @@ export class WorkbenchTerminalSession {
     if (this.shell.echoesInput === false && data.length > 0) {
       this.writeDisplay(mirrorKeystrokes(data))
     }
-    this.noteInput('human', data)
+    this.noteInput('human', readableInput(data), /[\r\n]/.test(data))
   }
 
   /** Append to the human-facing display only (no AI buffer, no dataListeners). */
@@ -268,14 +311,26 @@ export class WorkbenchTerminalSession {
     for (const subscriber of this.outputSubscribers) subscriber(termDisplay)
   }
 
-  private noteInput(source: ActivitySource, text: string): void {
+  /**
+   * @param source - who typed it.
+   * @param text - the attributable text: raw for the model, readable keystrokes
+   *   for a human.
+   * @param submits - whether the keystroke completed the line. It ends the
+   *   coalescing window immediately, which the cleaned text cannot signal on
+   *   its own: Enter is stripped from the recorded value.
+   */
+  private noteInput(source: ActivitySource, text: string, submits = false): void {
     if (source === 'model') {
       this.flushHumanInput()
       this.pushActivity({ source, text: ellipsize(text), at: Date.now() })
       return
     }
+    // A keystroke that carries no text — an arrow key, a bare modifier chord —
+    // is navigation, not an operation. Recording it would fill the feed with
+    // escape-sequence noise and make the human's real command unreadable.
+    if (text.length === 0 && !submits) return
     this.humanPending += text
-    if (this.humanPending.includes('\n') || this.humanPending.includes('\r') || this.humanPending.length >= 200) {
+    if (submits || this.humanPending.includes('\n') || this.humanPending.length >= 200) {
       this.flushHumanInput()
       return
     }
@@ -465,6 +520,25 @@ export class WorkbenchTerminalSession {
       busyActor: this.pending ? 'model' : undefined,
     }
   }
+}
+
+/**
+ * Human keystrokes as the activity feed should show them: the text the person
+ * actually typed, with the terminal's own vocabulary removed.
+ *
+ * A real PTY hands us every arrow key, focus event, and bracketed-paste toggle
+ * as an escape sequence. Those say nothing about intent, and escaping them into
+ * `^[[I` notation (which is what the feed used to do) turns one typed command
+ * into a page of noise.
+ */
+function readableInput(data: string): string {
+  return data
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[()*+#][0-9A-Za-z]/g, '')
+    .replace(/\x1b[@-Z\\-_]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(/\r/g, '')
 }
 
 function ellipsize(text: string): string {

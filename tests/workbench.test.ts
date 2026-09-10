@@ -1,18 +1,26 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import { WorkbenchGateway } from '../src/gateway.ts'
+import { readGitDiff, readGitStatus } from '../src/git.ts'
 import { createTools, resolveConfig } from '../src/index.ts'
-import { PROXY_ROUTE, extractRedirectTarget, rewriteHtml } from '../src/proxy.ts'
+import { PROXY_ROUTE, extractRedirectTarget, isDowngradeStub, isProtocolDowngrade, mobileHostVariant, rewriteHtml, withReaderNotice } from '../src/proxy.ts'
 import { sanitizeTerminalText, stripAnsiSequences } from '../src/terminal/ansi.ts'
 import type { WorkbenchServerFrame } from '../src/protocol.ts'
+import type { ActivityEntry } from '../src/types.ts'
 import { JournalStore } from '../src/terminal/journal.ts'
 import { UnknownTerminalError, WorkbenchTerminalManager } from '../src/terminal/manager.ts'
 import { ProfileStore } from '../src/terminal/profiles.ts'
 import { createSentinelLineFilter, stripSentinel } from '../src/terminal/sentinel.ts'
 import { TerminalStore } from '../src/terminal/store.ts'
 import { FakeConnection } from './fakes.ts'
+
+const run = promisify(execFile)
+/** Git may be missing on a bare image; the git suite reports that, not fails. */
+const gitAvailable = await run('git', ['--version']).then(() => true, () => false)
 
 const tempDirs: string[] = []
 
@@ -70,6 +78,7 @@ describe('workbench terminal manager & tools', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectSsh: async () => {
         const c = new FakeConnection()
         connections.push(c)
@@ -139,6 +148,7 @@ describe('workbench terminal manager & tools', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectLocal: async () => new FakeConnection(),
       terminalStore: new TerminalStore(dir),
     })
@@ -173,6 +183,7 @@ describe('workbench terminal manager & tools', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectLocal: async () => new FakeConnection(),
     })
     const live = await manager.open({ kind: 'local', sessionId: 'session-a', cwd: '/tmp' })
@@ -209,6 +220,116 @@ describe('workbench terminal manager & tools', () => {
   })
 })
 
+describe('terminal startup capture', () => {
+  it('never writes into the shell, and keeps the banner it prints on its own', async () => {
+    const connections: FakeConnection[] = []
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 2,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
+      connectLocal: async () => {
+        const c = new FakeConnection()
+        connections.push(c)
+        return c
+      },
+    })
+
+    const { banner } = await manager.open({ kind: 'local', name: 'quiet' })
+    const motd = await banner
+
+    // Startup is passive. The old sentinel probe wrote a `printf` into the
+    // shell, which made it print a second prompt — the line filter ate the
+    // command and its marker but not the extra prompt, so every freshly
+    // opened terminal showed its banner twice — and the command landed in the
+    // user's shell history besides.
+    expect(connections[0].shell.writes).toEqual([])
+    expect(motd).toContain('fake bash 1.0')
+    expect(motd.match(/fake bash/g)).toHaveLength(1)
+
+    await manager.closeAll()
+  })
+
+  it('asks for a silent line discipline when echo is off', async () => {
+    const connections: FakeConnection[] = []
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 2,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
+      connectLocal: async () => {
+        const c = new FakeConnection()
+        connections.push(c)
+        return c
+      },
+    })
+
+    await manager.open({ kind: 'local', name: 'silent', echo: false })
+    expect(connections[0].shell.writes.join('')).toContain('stty -echo')
+
+    await manager.closeAll()
+  })
+})
+
+describe.skipIf(!gitAvailable)('git worktree inspection', () => {
+  /** A throwaway repository with one commit, one edit, and one new file. */
+  async function makeRepo(): Promise<string> {
+    const dir = await tempDir()
+    const git = (...args: string[]): Promise<unknown> =>
+      run('git', ['-c', 'init.defaultBranch=main', ...args], { cwd: dir })
+    await git('init')
+    await git('config', 'user.email', 'test@example.com')
+    await git('config', 'user.name', 'workbench test')
+    await git('config', 'commit.gpgsign', 'false')
+    await writeFile(join(dir, 'tracked.txt'), 'one\ntwo\n')
+    await git('add', '-A')
+    await git('commit', '-m', 'init')
+    await writeFile(join(dir, 'tracked.txt'), 'one\ntwo\nthree\n')
+    await writeFile(join(dir, 'fresh.txt'), 'brand new\n')
+    return dir
+  }
+
+  it('reads branch, counts, and changed paths out of a real worktree', async () => {
+    const dir = await makeRepo()
+    const { view, error } = await readGitStatus(dir)
+
+    expect(error).toBeUndefined()
+    expect(view).not.toBeNull()
+    expect(view!.branch).toBe('main')
+    expect(view!.ahead).toBe(0)
+    expect(view!.behind).toBe(0)
+    // One appended line in a tracked file; the untracked file is not counted.
+    expect(view!.additions).toBe(1)
+
+    const paths = view!.files.map(f => f.path)
+    expect(paths).toContain('tracked.txt')
+    expect(paths).toContain('fresh.txt')
+    const fresh = view!.files.find(f => f.path === 'fresh.txt')!
+    expect(`${fresh.x}${fresh.y}`).toBe('??')
+  })
+
+  it('answers a plain directory with null rather than an error', async () => {
+    const dir = await tempDir()
+    const { view, error } = await readGitStatus(dir)
+    expect(view).toBeNull()
+    expect(error).toBeUndefined()
+  })
+
+  it('renders an untracked file as additions, since git has no diff for it', async () => {
+    const dir = await makeRepo()
+    const { diff } = await readGitDiff(dir, 'fresh.txt')
+    expect(diff).toContain('+brand new')
+
+    const tracked = await readGitDiff(dir, 'tracked.txt')
+    expect(tracked.diff).toContain('+three')
+    expect(tracked.diff).toContain('@@')
+  })
+})
+
 describe('workbench multi-channel gateway', () => {
   it('handles hello, open, attach, output, input, and profiles', async () => {
     const dir = await tempDir()
@@ -222,6 +343,7 @@ describe('workbench multi-channel gateway', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectLocal: async () => {
         const c = new FakeConnection()
         connections.push(c)
@@ -285,7 +407,34 @@ describe('workbench multi-channel gateway', () => {
     await settle()
     expect(connections[0].shell.writes.at(-1)).toBe('whoami\r')
 
-    // Close terminal
+    // Re-attaching carries the attribution history: a panel that mounts after
+    // the fact (reopened, or reconnected after a restart) would otherwise show
+    // an empty activity stream for work it can still see in the scrollback.
+    socket.message(JSON.stringify({
+      channel: 'terminal',
+      type: 'attach',
+      id: termId,
+    }))
+    await settle()
+    const reattached = socket.last('terminal', 'attached') as unknown as { activity: { source: string; text: string }[] }
+    expect(reattached.activity).toEqual([{ source: 'human', text: 'whoami', at: expect.any(Number) }])
+
+    // A resize is answered with the refreshed view list. The panel's size
+    // readout has no other source, so before this it stayed at whatever grid
+    // the shell happened to be opened with.
+    socket.message(JSON.stringify({ channel: 'terminal', type: 'resize', id: termId, rows: 30, cols: 100 }))
+    await settle()
+    const resized = socket.last('terminal', 'terminals') as unknown as { terminals: { terminalId: string; cols: number; rows: number }[] }
+    expect(resized.terminals.find(t => t.terminalId === termId)).toMatchObject({ cols: 100, rows: 30 })
+
+    // Git frames answer on the same socket, against this session's workspace.
+    socket.message(JSON.stringify({ channel: 'git', type: 'status', cwd: process.cwd() }))
+    await settle(200)
+    const gitStatus = socket.last('git', 'status') as unknown as { status: unknown }
+    expect(gitStatus).toBeDefined()
+    expect(gitStatus.status === null || typeof gitStatus.status === 'object').toBe(true)
+
+    // Close terminal — exactly one closed frame, not one per sender
     socket.message(JSON.stringify({
       channel: 'terminal',
       type: 'close',
@@ -294,6 +443,8 @@ describe('workbench multi-channel gateway', () => {
     await settle()
     const closed = socket.last('terminal', 'closed')
     expect(closed).toMatchObject({ channel: 'terminal', type: 'closed', id: termId })
+    const closedCount = socket.sent.filter(f => f.channel === 'terminal' && f.type === 'closed' && (f as { id: string }).id === termId).length
+    expect(closedCount).toBe(1)
 
     await manager.closeAll()
   })
@@ -312,6 +463,49 @@ describe('sentinel & filtering', () => {
     })
   })
 
+  it('attributes readable human input and drops navigation keystrokes', async () => {
+    const connections: FakeConnection[] = []
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 2,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
+      connectLocal: async () => {
+        const c = new FakeConnection()
+        connections.push(c)
+        return c
+      },
+    })
+    const { snapshot } = await manager.open({ kind: 'local', name: 'activity' })
+    const session = manager.get(snapshot.terminalId)
+    const seen: ActivityEntry[] = []
+    session.onActivity(entry => seen.push(entry))
+
+    // A real PTY delivers arrow keys, focus events, and bracketed-paste toggles
+    // as escape sequences. They carry no text, so they are navigation — and the
+    // feed used to escape them into `^[[I` notation, turning one typed command
+    // into a page of noise.
+    session.humanWrite('\x1b[I')
+    session.humanWrite('\x1b[A')
+    session.humanWrite('\x1b[O')
+    session.humanWrite('\x1b[?2004h')
+    expect(seen).toEqual([])
+
+    // Typed text is attributed, and Enter publishes it at once rather than
+    // waiting out the keystroke-coalescing window.
+    session.humanWrite('git status')
+    session.humanWrite('\r')
+    expect(seen).toEqual([{ source: 'human', text: 'git status', at: expect.any(Number) }])
+
+    // An empty Enter (a bare prompt line) records nothing at all.
+    session.humanWrite('\r')
+    expect(seen).toHaveLength(1)
+
+    await manager.closeAll()
+  })
+
   it('protects terminal input during in-flight model command execution and allows Ctrl+C', async () => {
     const dir = await tempDir()
     const journal = new JournalStore(dir)
@@ -323,6 +517,7 @@ describe('sentinel & filtering', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectLocal: async () => {
         const c = new FakeConnection()
         connections.push(c)
@@ -411,6 +606,7 @@ describe('ansi sanitizing', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectLocal: async () => {
         const c = new FakeConnection()
         // Simulate a TUI program: escape-heavy redraw before the sentinel
@@ -490,6 +686,34 @@ describe('reader proxy rewriting', () => {
     // normal pages bounce nowhere
     expect(extractRedirectTarget('<html><body>hello</body></html>', 'https://example.com/')).toBeUndefined()
   })
+
+  it('refuses to follow an https -> http downgrade, and names the stub', () => {
+    const shell = `<html><head><script>location.replace(location.href.replace("https://","http://"));</script></head></html>`
+    expect(isDowngradeStub(shell, 'https://www.baidu.com/')).toBe(true)
+    // The downgrade itself is what a reader proxy must not chase: it is a
+    // security retreat, and a TLS-only network answers it with a reset.
+    expect(isProtocolDowngrade('https://www.baidu.com/', 'http://www.baidu.com/')).toBe(true)
+    expect(isProtocolDowngrade('http://www.baidu.com/', 'https://www.baidu.com/')).toBe(false)
+    expect(isProtocolDowngrade('https://a.example/', 'https://b.example/')).toBe(false)
+    // A real page that happens to carry a refresh meta is not a stub.
+    expect(isDowngradeStub('<html><body><p>hi</p></body></html>', 'https://example.com/')).toBe(false)
+  })
+
+  it('derives the mobile host used as the downgrade-stub fallback', () => {
+    expect(mobileHostVariant('https://www.baidu.com/s?wd=x')).toBe('https://m.baidu.com/s?wd=x')
+    expect(mobileHostVariant('https://example.com/')).toBe('https://m.example.com/')
+    // Already mobile, or nothing to strip: no second attempt to make.
+    expect(mobileHostVariant('https://m.baidu.com/')).toBeUndefined()
+    expect(mobileHostVariant('https://wap.example.com/')).toBeUndefined()
+  })
+
+  it('marks a substituted mobile page with a visible notice', () => {
+    const out = withReaderNotice('<html><body><p>hi</p></body></html>', '已切换到 m.baidu.com')
+    expect(out).toContain('<body><div')
+    expect(out).toContain('已切换到 m.baidu.com')
+    // The notice text is escaped, never interpreted.
+    expect(withReaderNotice('<body></body>', '<script>x</script>')).toContain('&lt;script&gt;')
+  })
 })
 
 describe('workbench browser tools', () => {
@@ -503,6 +727,7 @@ describe('workbench browser tools', () => {
       defaultPort: 22,
       connectTimeoutMs: 100,
       maxScrollbackBytes: 64 * 1024,
+      startupQuietMs: 10,
       connectLocal: async () => new FakeConnection(),
       onOpen: s => journal.attach(s),
     })
