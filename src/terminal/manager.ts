@@ -4,6 +4,9 @@
  * @module dsh-workbench/terminal/manager
  */
 
+import { existsSync, statSync } from 'node:fs'
+import { join, dirname, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { hostAllowed } from './allowlist.ts'
 import { connectLocal } from './local.ts'
 import { WorkbenchTerminalSession } from './session.ts'
@@ -13,6 +16,37 @@ import type { ActivityEntry, TerminalCollaborationView, TerminalConnection, Term
 
 export const INITIAL_COLS = 220
 export const INITIAL_ROWS = 50
+
+/**
+ * Resolve a sensible working directory for a new local terminal when the
+ * caller did not specify one. We walk up from the dsh-web process's cwd
+ * looking for the nearest directory that contains a project marker
+ * (.git, package.json, Cargo.toml, pyproject.toml, go.mod, etc.). This way
+ * running dsh web from a project's subdirectory automatically opens new
+ * terminals in that project rather than in the dsh-hub checkout.
+ */
+function resolveSmartCwd(): string {
+  const start = process.cwd()
+  const markers = ['.git', 'package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod', 'pom.xml', 'build.gradle']
+  let dir = resolve(start)
+  while (true) {
+    for (const m of markers) {
+      if (existsSync(join(dir, m))) return dir
+    }
+    const parent = dirname(dir)
+    if (parent === dir) return start
+    dir = parent
+  }
+}
+
+function defaultLocalCwd(): string {
+  try {
+    return resolveSmartCwd()
+  }
+  catch {
+    return process.cwd()
+  }
+}
 
 export interface ManagerOptions {
   allowlist: readonly string[]
@@ -113,12 +147,17 @@ export class WorkbenchTerminalManager {
       })
     }
     else {
+      // Local shells: if the caller didn't specify a cwd, default to the
+      // nearest project root above the dsh-web process's cwd so the new
+      // terminal lands in the project the user is actually working on.
+      const localCwd = req.cwd ?? defaultLocalCwd()
       const connectFn = this.options.connectLocal ?? connectLocal
       connection = await connectFn({
-        cwd: req.cwd,
+        cwd: localCwd,
         cols: INITIAL_COLS,
         rows: INITIAL_ROWS,
       })
+      req = { ...req, cwd: localCwd }
     }
 
     const { session, motd } = await WorkbenchTerminalSession.start(

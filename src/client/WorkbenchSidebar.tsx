@@ -18,9 +18,13 @@ import { workbenchClient } from './ws.ts'
 export interface WorkbenchSidebarProps {
   sessionId?: string
   closeDetails?: () => void
+  /** Working directory of the active harness session; used as the default cwd
+   *  for newly created local terminals so they open in the project the user
+   *  is actually working on rather than in the dsh-web process's cwd. */
+  cwd?: string
 }
 
-export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarProps): JSX.Element {
+export function WorkbenchSidebar({ sessionId, closeDetails, cwd }: WorkbenchSidebarProps): JSX.Element {
   const [activeTabId, setActiveTabId] = useState<string>('')
   const [terminals, setTerminals] = useState<TerminalCollaborationView[]>([])
   const [browserTabs, setBrowserTabs] = useState<WorkbenchBrowserTab[]>([])
@@ -42,7 +46,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
 
     if (!ensuredRef.current) {
       ensuredRef.current = true
-      workbenchClient.send({ channel: 'terminal', type: 'ensure', sessionId })
+      workbenchClient.send({ channel: 'terminal', type: 'ensure', sessionId, cwd })
     }
 
     const disposeFrames = workbenchClient.onFrame((frame) => {
@@ -157,7 +161,7 @@ export function WorkbenchSidebar({ sessionId, closeDetails }: WorkbenchSidebarPr
     workbenchClient.send({
       channel: 'terminal',
       type: 'open',
-      request: { kind: 'local', name: `终端 ${terminals.length + 1}`, sessionId, echo: true },
+      request: { kind: 'local', name: `终端 ${terminals.length + 1}`, sessionId, echo: true, cwd },
     })
   }
 
