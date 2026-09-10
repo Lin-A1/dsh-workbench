@@ -28,9 +28,12 @@ const CLOSING_CLASS = 'wb-closing'
 
 export function setLayoutFace(face?: LayoutFace): void {
   layoutFace = face
-  if (typeof window !== 'undefined' && localStorage.getItem(STORAGE_KEY_OPEN) === 'true') {
-    openSidebarColumn()
-  }
+  // The workbench opens ONLY in response to explicit intent from now on:
+  // a user click on the toggle, an AI summon frame, or the workbench_show
+  // tool call. We no longer auto-restore the previous-open state from
+  // localStorage at boot — sessions start clean so the right rail is hidden
+  // by default until something asks for it.
+  void face
 }
 
 export function isSidebarOpen(): boolean {
@@ -83,6 +86,9 @@ function invokeFace(method: 'openDetails' | 'closeDetails', attempt = 0): void {
 
 export function openSidebarColumn(): void {
   if (typeof document === 'undefined') return
+  // The 'true' here is the only way the open state propagates between
+  // sessions; we never auto-read it on boot, so a stale 'true' from a prior
+  // session is harmless until the user opens us again in this one.
   localStorage.setItem(STORAGE_KEY_OPEN, 'true')
   document.body.classList.remove(CLOSING_CLASS)
   document.body.classList.add(OPENED_CLASS)
@@ -194,13 +200,18 @@ export function initResizeHandle(handle: HTMLElement): () => void {
  * Adopt a details column the harness opened on its own (a persisted layout
  * store can boot at a non-zero details width before we ever run): when our
  * root is mounted inside a visibly open column and the user has not just
- * closed the workbench, claim it with our full-width treatment. Only ever
- * adds the class — closing stays exclusively ours — so no feedback loop.
+ * closed the workbench in this session, claim it with our full-width
+ * treatment. Only ever adds the class — closing stays exclusively ours — so
+ * no feedback loop. The session-level "I closed it" preference (any value
+ * other than absent) is honored: once you close the panel in this session,
+ * the harness can swing details open for whatever it wants, but we stay
+ * folded until you reopen us.
  */
 export function installAdoption(): void {
   if (typeof document === 'undefined' || adoptionObserver !== undefined) return
   adoptionObserver = new MutationObserver(() => {
     if (isSidebarOpen()) return
+    // Respect an explicit close from the user in the current session.
     if (localStorage.getItem(STORAGE_KEY_OPEN) === 'false') return
     const col = document.querySelector("[class*='detailsCol']")
     if (col instanceof HTMLElement && col.querySelector('.wb-sidebar-root') !== null && col.getBoundingClientRect().width > 80) {
