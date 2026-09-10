@@ -11,7 +11,7 @@ import { HeaderToggleAction } from './HeaderToggleAction.tsx'
 import { workbenchClient } from './ws.ts'
 import { WorkbenchSidebar } from './WorkbenchSidebar.tsx'
 
-export const inject = ['slots', 'layout']
+export const inject = ['slots', 'layout', 'cwd?']
 
 /* ----------------------------------------------------------------------------
  * Design system
