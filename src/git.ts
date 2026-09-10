@@ -162,23 +162,39 @@ export async function readGitStatus(cwd: string): Promise<{ view: GitStatusView 
   return { view: { at: Date.now(), branch, ahead, behind, additions, deletions, files } }
 }
 
-/** Render an untracked file as the all-additions diff Git would not show. */
+/**
+ * Render an untracked file as the diff Git would show for a new file.
+ *
+ * The output is real unified-diff shape — `diff --git`, `new file mode`, a
+ * `/dev/null` old side, and a genuine `@@ -0,0 +1,N @@` header — rather than a
+ * home-made marker line. The panel then parses one format for every case, and
+ * a reader who knows diffs sees what they expect.
+ */
 async function synthesizeUntrackedDiff(cwd: string, path: string): Promise<string> {
   const full = join(cwd, path)
   try {
     const info = await stat(full)
-    if (!info.isFile()) return `(untracked: ${path} is not a regular file)\n`
+    if (!info.isFile()) return `[${path} is not a regular file]\n`
     if (info.size > MAX_UNTRACKED_BYTES) {
-      return `(untracked: ${path} is ${Math.round(info.size / 1024)} KB — too large to render)\n`
+      return `[${path} is ${Math.round(info.size / 1024)} KB — too large to render]\n`
     }
   }
   catch (error) {
-    return `(untracked: ${error instanceof Error ? error.message : String(error)})\n`
+    return `[${error instanceof Error ? error.message : String(error)}]\n`
   }
   const text = await readFile(full, 'utf8').catch(() => undefined)
-  if (text === undefined) return `(untracked: ${path} could not be read as text)\n`
-  const body = text.split('\n').map(line => `+${line}`).join('\n')
-  return `@@ untracked file — not yet in the index @@\n${body}\n`
+  if (text === undefined) return `[${path} could not be read as text]\n`
+  // A file ending in a newline has no trailing empty line of its own.
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  const lines = body.split('\n')
+  const header = [
+    `diff --git a/${path} b/${path}`,
+    'new file mode 100644',
+    '--- /dev/null',
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+  ].join('\n')
+  return `${header}\n${lines.map(line => `+${line}`).join('\n')}\n`
 }
 
 /**

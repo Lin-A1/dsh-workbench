@@ -29,12 +29,67 @@ function toneOf(x: string, y: string): string {
   return 'modified'
 }
 
-function diffLineClass(line: string): string {
-  if (line.startsWith('@@')) return 'hunk'
-  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file') || line.startsWith('similarity ') || line.startsWith('rename ')) return 'meta'
-  if (line.startsWith('+')) return 'add'
-  if (line.startsWith('-')) return 'del'
-  return 'ctx'
+/**
+ * One parsed diff line. The `+`/`-` marker becomes its own column instead of
+ * being glued to the text, so a reader scans a gutter rather than reading a
+ * leading character on every line, and both sides carry line numbers.
+ */
+interface DiffLine {
+  kind: 'hunk' | 'meta' | 'add' | 'del' | 'ctx' | 'note'
+  /** Line number on the old side, when the line exists there. */
+  oldNo?: number
+  /** Line number on the new side, when the line exists there. */
+  newNo?: number
+  marker: '+' | '-' | ' '
+  text: string
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
+
+/**
+ * Parse a unified diff into renderable lines.
+ *
+ * Everything before the first hunk header is file metadata (`diff --git`,
+ * `index`, the `---`/`+++` sides); after it, the first character decides which
+ * side's counter advances. Parsing both sides is what lets the gutter show real
+ * line numbers instead of a running count.
+ */
+function parseDiff(raw: string): DiffLine[] {
+  const out: DiffLine[] = []
+  let oldNo = 0
+  let newNo = 0
+  let inHunk = false
+  for (const line of raw.split('\n')) {
+    const hunk = HUNK_HEADER.exec(line)
+    if (hunk !== null) {
+      oldNo = Number(hunk[1])
+      newNo = Number(hunk[3])
+      inHunk = true
+      out.push({ kind: 'hunk', marker: ' ', text: line })
+      continue
+    }
+    if (!inHunk) {
+      // `[something]` alone is this panel's own explanation, not diff content.
+      if (/^\[.*\]$/.test(line)) out.push({ kind: 'note', marker: ' ', text: line.slice(1, -1) })
+      else out.push({ kind: 'meta', marker: ' ', text: line })
+      continue
+    }
+    const marker = line[0]
+    if (marker === '+') {
+      out.push({ kind: 'add', newNo: newNo++, marker: '+', text: line.slice(1) })
+    }
+    else if (marker === '-') {
+      out.push({ kind: 'del', oldNo: oldNo++, marker: '-', text: line.slice(1) })
+    }
+    else if (marker === '\\') {
+      // "\ No newline at end of file" annotates the previous line.
+      out.push({ kind: 'note', marker: ' ', text: line.slice(1).trim() })
+    }
+    else {
+      out.push({ kind: 'ctx', oldNo: oldNo++, newNo: newNo++, marker: ' ', text: line.slice(1) })
+    }
+  }
+  return out
 }
 
 export function GitPanel({ sessionId, active }: GitPanelProps): JSX.Element {
@@ -161,8 +216,13 @@ export function GitPanel({ sessionId, active }: GitPanelProps): JSX.Element {
               <>
                 <div className="wb-git-diff-path" title={selected}>{selected}</div>
                 <pre className="wb-git-diff-body">
-                  {diff.split('\n').map((line, i) => (
-                    <div key={i} className={`wb-git-diff-line ${diffLineClass(line)}`}>{line.length === 0 ? ' ' : line}</div>
+                  {parseDiff(diff).map((line, i) => (
+                    <div key={i} className={`wb-git-diff-line ${line.kind}`}>
+                      <span className="wb-git-diff-no">{line.oldNo ?? ''}</span>
+                      <span className="wb-git-diff-no">{line.newNo ?? ''}</span>
+                      <span className="wb-git-diff-mark">{line.text.length === 0 && line.kind === 'ctx' ? '' : line.marker}</span>
+                      <span className="wb-git-diff-text">{line.text.length === 0 ? ' ' : line.text}</span>
+                    </div>
                   ))}
                 </pre>
               </>

@@ -403,47 +403,25 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
                 }}
               />
             ) : null}
+
+            {/* The one control that makes a view: at the end of the row of
+                views it creates, listing every kind alike. The browser used to
+                have a button of its own while the other three hid in a menu,
+                which is what "the web page is here and the other three are
+                there" was looking at. */}
+            <button
+              type="button"
+              className={`wb-new-tab${plusMenuOpen ? ' active' : ''}`}
+              ref={plusBtnRef}
+              onClick={() => (plusMenuOpen ? setPlusMenuOpen(false) : openPlusMenu())}
+              title="新建终端 / 新建网页 / 打开 Git / 打开动态"
+              aria-haspopup="menu"
+              aria-expanded={plusMenuOpen}
+            >
+              <PlusIcon size={13} />
+            </button>
           </div>
 
-          {/* Window-level actions, outside the scrolling strip so nothing clips.
-              The new-tab control is a labelled pill rather than a bare plus: the
-              sidebar draws an add-tab plus of its own one row above, and the two
-              mean different things (a new right-Sidebar tab type, versus a new
-              terminal or page inside this one). Two identical glyphs a row apart
-              read as one control with two behaviours. */}
-          {/* Every "make something" action lives in this one segmented control:
-              the browser is one click (the surface people reach for most), and
-              the menu holds the rest. Two floating buttons here read as two
-              unrelated features, which is what "scattered" meant.
-
-              The connection state is NOT repeated here — the status bar already
-              carries it with words, and two indicators for one fact is exactly
-              the kind of duplicate this row is being cleaned of. */}
-          <div className="wb-window-actions">
-            <div className="wb-new-group">
-              <button
-                type="button"
-                className="wb-new-seg wb-new-primary"
-                onClick={handleCreateBrowser}
-                title="打开浏览器（在工作台内新建网页标签）"
-              >
-                <GlobeIcon size={12} />
-                <span>网页</span>
-              </button>
-              <button
-                type="button"
-                className={`wb-new-seg wb-new-more${plusMenuOpen ? ' active' : ''}`}
-                ref={plusBtnRef}
-                onClick={() => (plusMenuOpen ? setPlusMenuOpen(false) : openPlusMenu())}
-                title="新建终端 / 打开 Git 面板 / 查看协同动态流"
-                aria-haspopup="menu"
-                aria-expanded={plusMenuOpen}
-              >
-                <PlusIcon size={12} />
-                <ChevronDownIcon size={11} />
-              </button>
-            </div>
-          </div>
         </div>
 
         {globalError ? (
@@ -495,8 +473,8 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
                   two rows under the real one was the third place to make
                   something. The empty state points at that control instead. */}
               <p className="wb-hint">
-                终端、网页预览、Git 与协同动态都开在这块面板里，AI 也可以替你打开并实时共用。
-                用上方的「网页」一键开浏览器，或「＋」新建终端。
+                终端、网页预览、Git 变更与协同动态都开在这块面板里，AI 也可以替你打开并实时共用。
+                点标签条末尾的「＋」新建。
               </p>
             </div>
           ) : null}
@@ -584,6 +562,10 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
           <button type="button" className="wb-menu-item" onClick={handleCreateTerminal}>
             <span className="wb-menu-icon"><TerminalIcon size={13} /></span>
             <span>新建本地终端</span>
+          </button>
+          <button type="button" className="wb-menu-item" onClick={handleCreateBrowser}>
+            <span className="wb-menu-icon"><GlobeIcon size={13} /></span>
+            <span>新建网页标签</span>
           </button>
           {!gitTabOpen || !activityTabOpen ? <div className="wb-menu-sep" /> : null}
           {!gitTabOpen ? (

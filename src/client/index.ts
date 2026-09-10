@@ -227,46 +227,29 @@ body:not([data-ds-dark-theme]) {
 }
 
 /* ---- The one control that makes things -----------------------------------
-   A single segmented pill: the browser in one click (left), everything else
-   behind the caret (right). Split into two floating buttons it read as two
-   unrelated features, and the sidebar draws an add-tab plus of its own one row
-   above — a third bare plus in this row was one affordance too many.
-
-   The menu still anchors to the panel root, not the header: the header strip
-   scrolls and the card clips, so a dropdown parented there never appeared. */
-.wb-new-group {
-  display: inline-flex;
-  align-items: stretch;
-  border: 1px solid var(--wb-line-strong);
-  border-radius: 7px;
-  overflow: hidden;
-  background: var(--wb-hover);
-}
-.wb-new-seg {
+   A single `+` at the end of the row of views it creates, listing every view
+   kind alike. Before this the browser had a button of its own while the other
+   three sat in a menu, so the same idea lived in two controls — and the
+   platform's own file browser lived in a third place entirely. */
+.wb-new-tab {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  padding: 0;
   border: none;
   background: transparent;
-  color: var(--wb-text-2);
-  font-family: inherit;
-  font-size: 12px;
+  color: var(--wb-text-3);
+  border-radius: 6px;
   cursor: pointer;
-  white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.wb-new-seg:hover, .wb-new-seg.active {
+.wb-new-tab:hover, .wb-new-tab.active {
   background: var(--wb-active);
   color: var(--wb-text-1);
-}
-.wb-new-primary { padding: 0 9px 0 8px; }
-.wb-new-more {
-  padding: 0 5px;
-  gap: 0;
-  border-left: 1px solid var(--wb-line-strong);
-  color: var(--wb-text-3);
 }
 
 .wb-plus-menu {
@@ -810,15 +793,46 @@ body:not([data-ds-dark-theme]) {
   line-height: 1.55;
   background: var(--wb-inset);
 }
+/* A diff line is a four-column row: old number, new number, marker, text. The
+   marker gets its own column so the eye scans a gutter instead of reading a
+   leading character on every line, and both sides carry real line numbers
+   parsed from the hunk header. */
 .wb-git-diff-line {
-  padding: 0 12px;
+  display: flex;
+  align-items: baseline;
+  padding-right: 10px;
   white-space: pre;
   color: var(--wb-text-2);
 }
-.wb-git-diff-line.add { color: #7ee2a8; background: rgba(70, 201, 140, 0.09); }
-.wb-git-diff-line.del { color: #ffa198; background: rgba(239, 111, 97, 0.09); }
-.wb-git-diff-line.hunk { color: #79b8ff; background: rgba(121, 184, 255, 0.08); }
+.wb-git-diff-no {
+  flex: none;
+  width: 40px;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--wb-text-3);
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.wb-git-diff-mark {
+  flex: none;
+  width: 15px;
+  text-align: center;
+  user-select: none;
+  opacity: 0.8;
+}
+.wb-git-diff-text { flex: 1; min-width: 0; }
+
+.wb-git-diff-line.add { background: rgba(70, 201, 140, 0.09); color: #7ee2a8; }
+.wb-git-diff-line.del { background: rgba(239, 111, 97, 0.09); color: #ffa198; }
+.wb-git-diff-line.hunk {
+  background: rgba(121, 184, 255, 0.08);
+  color: #79b8ff;
+  padding-left: 10px;
+  margin: 3px 0;
+}
 .wb-git-diff-line.meta { color: var(--wb-text-3); }
+.wb-git-diff-line.note { color: var(--wb-text-3); font-style: italic; padding-left: 10px; }
 body:not([data-ds-dark-theme]) .wb-git-diff-line.add { color: #116329; }
 body:not([data-ds-dark-theme]) .wb-git-diff-line.del { color: #a40e26; }
 
