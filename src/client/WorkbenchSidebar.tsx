@@ -412,12 +412,24 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
               terminal or page inside this one). Two identical glyphs a row apart
               read as one control with two behaviours. */}
           <div className="wb-window-actions">
+            {/* The browser gets its own button. Behind the new-tab menu it read
+                as "there is no way to open the browser", which is the wrong
+                answer for the one surface people reach for most. */}
+            <button
+              type="button"
+              className="wb-plus-btn"
+              onClick={handleCreateBrowser}
+              title="打开浏览器（在工作台内新建网页标签）"
+            >
+              <GlobeIcon size={12} />
+              <span>网页</span>
+            </button>
             <button
               type="button"
               className={`wb-plus-btn${plusMenuOpen ? ' active' : ''}`}
               ref={plusBtnRef}
               onClick={() => (plusMenuOpen ? setPlusMenuOpen(false) : openPlusMenu())}
-              title="在工作台内新建终端或网页"
+              title="在工作台内新建终端，或打开 Git / 动态面板"
               aria-haspopup="menu"
               aria-expanded={plusMenuOpen}
             >
@@ -568,10 +580,6 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
           <button type="button" className="wb-menu-item" onClick={handleCreateTerminal}>
             <span className="wb-menu-icon"><TerminalIcon size={13} /></span>
             <span>新建本地终端</span>
-          </button>
-          <button type="button" className="wb-menu-item" onClick={handleCreateBrowser}>
-            <span className="wb-menu-icon"><GlobeIcon size={13} /></span>
-            <span>新建网页标签</span>
           </button>
           {!gitTabOpen || !activityTabOpen ? <div className="wb-menu-sep" /> : null}
           {!gitTabOpen ? (
