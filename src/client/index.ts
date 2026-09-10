@@ -215,30 +215,47 @@ body:not([data-ds-dark-theme]) {
   color: var(--wb-red);
 }
 
-/* ---- New-tab button + popover -------------------------------------------
-   The menu anchors to the panel root (not the header): the header strip
-   scrolls and the card clips, so a dropdown parented there never appeared.
-   The button carries a label, because the sidebar draws an add-tab plus of
-   its own one row above and a second bare plus reads as the same control. */
-.wb-plus-btn {
+/* ---- The one control that makes things -----------------------------------
+   A single segmented pill: the browser in one click (left), everything else
+   behind the caret (right). Split into two floating buttons it read as two
+   unrelated features, and the sidebar draws an add-tab plus of its own one row
+   above — a third bare plus in this row was one affordance too many.
+
+   The menu still anchors to the panel root, not the header: the header strip
+   scrolls and the card clips, so a dropdown parented there never appeared. */
+.wb-new-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--wb-line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--wb-hover);
+}
+.wb-new-seg {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 25px;
-  padding: 0 9px 0 7px;
+  height: 24px;
+  padding: 0 9px;
   border: none;
   background: transparent;
-  color: var(--wb-text-3);
-  border-radius: 6px;
+  color: var(--wb-text-2);
   font-family: inherit;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.wb-plus-btn:hover, .wb-plus-btn.active {
+.wb-new-seg:hover, .wb-new-seg.active {
   background: var(--wb-active);
   color: var(--wb-text-1);
+}
+.wb-new-primary { padding: 0 9px 0 8px; }
+.wb-new-more {
+  padding: 0 5px;
+  gap: 0;
+  border-left: 1px solid var(--wb-line-strong);
+  color: var(--wb-text-3);
 }
 
 .wb-plus-menu {
@@ -290,20 +307,6 @@ body:not([data-ds-dark-theme]) {
   padding-left: 8px;
   flex: none;
 }
-
-.wb-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  display: inline-block;
-  flex: none;
-  margin: 0 5px;
-}
-.wb-dot.ok {
-  background: var(--wb-green);
-  box-shadow: 0 0 0 3px rgba(70, 201, 140, 0.12);
-}
-.wb-dot.dead { background: var(--wb-text-3); box-shadow: none; }
 
 .wb-icon-btn {
   display: inline-flex;

@@ -17,7 +17,7 @@ import { ActivityFeed } from './ActivityFeed.tsx'
 import { BrowserView, DEFAULT_HOME_URL } from './browser/BrowserView.tsx'
 import { openWorkbench } from './column.ts'
 import { GitPanel } from './GitPanel.tsx'
-import { ActivityIcon, CloseIcon, GitBranchIcon, GlobeIcon, PlusIcon, ServerIcon, TerminalIcon } from './icons.tsx'
+import { ActivityIcon, ChevronDownIcon, CloseIcon, GitBranchIcon, GlobeIcon, PlusIcon, ServerIcon, TerminalIcon } from './icons.tsx'
 import { TerminalView } from './terminal/TerminalView.tsx'
 import { workbenchClient } from './ws.ts'
 
@@ -411,32 +411,38 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
               mean different things (a new right-Sidebar tab type, versus a new
               terminal or page inside this one). Two identical glyphs a row apart
               read as one control with two behaviours. */}
+          {/* Every "make something" action lives in this one segmented control:
+              the browser is one click (the surface people reach for most), and
+              the menu holds the rest. Two floating buttons here read as two
+              unrelated features, which is what "scattered" meant.
+
+              The connection state is NOT repeated here — the status bar already
+              carries it with words, and two indicators for one fact is exactly
+              the kind of duplicate this row is being cleaned of. */}
           <div className="wb-window-actions">
-            {/* The browser gets its own button. Behind the new-tab menu it read
-                as "there is no way to open the browser", which is the wrong
-                answer for the one surface people reach for most. */}
-            <button
-              type="button"
-              className="wb-plus-btn"
-              onClick={handleCreateBrowser}
-              title="打开浏览器（在工作台内新建网页标签）"
-            >
-              <GlobeIcon size={12} />
-              <span>网页</span>
-            </button>
-            <button
-              type="button"
-              className={`wb-plus-btn${plusMenuOpen ? ' active' : ''}`}
-              ref={plusBtnRef}
-              onClick={() => (plusMenuOpen ? setPlusMenuOpen(false) : openPlusMenu())}
-              title="在工作台内新建终端，或打开 Git / 动态面板"
-              aria-haspopup="menu"
-              aria-expanded={plusMenuOpen}
-            >
-              <PlusIcon size={12} />
-              <span>新建</span>
-            </button>
-            <span className={`wb-dot ${connected ? 'ok' : 'dead'}`} title={connected ? '协同网关已连接' : '网关离线重连中'} />
+            <div className="wb-new-group">
+              <button
+                type="button"
+                className="wb-new-seg wb-new-primary"
+                onClick={handleCreateBrowser}
+                title="打开浏览器（在工作台内新建网页标签）"
+              >
+                <GlobeIcon size={12} />
+                <span>网页</span>
+              </button>
+              <button
+                type="button"
+                className={`wb-new-seg wb-new-more${plusMenuOpen ? ' active' : ''}`}
+                ref={plusBtnRef}
+                onClick={() => (plusMenuOpen ? setPlusMenuOpen(false) : openPlusMenu())}
+                title="新建终端 / 打开 Git 面板 / 查看协同动态流"
+                aria-haspopup="menu"
+                aria-expanded={plusMenuOpen}
+              >
+                <PlusIcon size={12} />
+                <ChevronDownIcon size={11} />
+              </button>
+            </div>
           </div>
         </div>
 
