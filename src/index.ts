@@ -12,10 +12,12 @@ import type { ToolDefinition, ToolResult } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import { registerWorkbenchGateway, type WorkbenchGateway } from './gateway.ts'
 import { renderList, renderOpen, renderRead, renderSend } from './render.ts'
+import { createSessionDirectory } from './session-registry.ts'
 import { JournalStore } from './terminal/journal.ts'
 import { WorkbenchTerminalManager } from './terminal/manager.ts'
 import { ProfileStore } from './terminal/profiles.ts'
 import { TerminalStore } from './terminal/store.ts'
+import type { SessionCwdResolver } from './session-registry.ts'
 import type { TerminalKind } from './types.ts'
 
 export const name = 'dsh-workbench'
@@ -169,22 +171,28 @@ function cleanLossless<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj))
 }
 
+/** The conversation the running tool call belongs to, when the loop supplies one. */
+function agentSessionId(exec?: { agent?: { id: unknown } }): string | undefined {
+  return exec?.agent === undefined ? undefined : String(exec.agent.id)
+}
+
 export function createTools(
   manager: WorkbenchTerminalManager,
   config: ResolvedConfig,
   profiles?: ProfileStore,
   gateway?: WorkbenchGateway,
+  sessionCwd?: SessionCwdResolver,
 ): ToolDefinition[] {
   const maxResultBytes = config.maxResultBytes
 
   return [
     defineTool({
       name: 'workbench_terminal_open',
-      description: 'Open a collaborative interactive shell terminal (local or SSH) attached to the workbench. The human operator can watch and type in this terminal in real-time. Use kind="local" (default) to execute in the workspace directory, or kind="ssh" for remote servers.',
+      description: 'Open a collaborative interactive shell terminal (local or SSH) attached to the workbench. The human operator can watch and type in this terminal in real-time. Use kind="local" (default) to execute in the current session workspace, or kind="ssh" for remote servers.',
       parameters: {
         kind: { type: 'string', enum: ['local', 'ssh'], description: 'Terminal type: "local" (default) or "ssh".' },
         name: { type: 'string', description: 'Display name for the terminal tab.' },
-        cwd: { type: 'string', description: 'Working directory for local shell.' },
+        cwd: { type: 'string', description: 'Working directory for local shell. Omit to use this session\'s workspace directory.' },
         host: { type: 'string', description: 'Remote host for SSH.' },
         user: { type: 'string', description: 'Remote user for SSH.' },
         port: { type: 'number', description: 'Port for SSH (default 22).' },
@@ -207,11 +215,18 @@ export function createTools(
       async execute(args: OpenArgs, exec) {
         let base = args.profileName && profiles ? await profiles.get(args.profileName) : undefined
         const kind: TerminalKind = args.kind ?? base?.kind ?? (args.host ? 'ssh' : 'local')
+        const sessionId = agentSessionId(exec)
+        // Local shells land in the conversation's own workspace: the model's
+        // tool call is attributed to its session, and the session header names
+        // the directory. Without a session (a headless host), the manager's
+        // project-root heuristic remains the fallback.
+        const cwd = args.cwd ?? base?.cwd ?? (sessionCwd ? await sessionCwd(sessionId) : undefined)
 
         const { snapshot, motd } = await manager.open({
           kind,
           name: args.name ?? base?.name,
-          cwd: args.cwd ?? base?.cwd,
+          sessionId,
+          cwd,
           host: args.host ?? base?.host,
           user: args.user ?? base?.user,
           port: args.port ?? base?.port,
@@ -320,7 +335,7 @@ export function createTools(
 
     defineTool({
       name: 'workbench_terminal_list',
-      description: 'List active collaborative terminals with unread output count and recent human activity.',
+      description: 'List the collaborative terminals belonging to the current conversation, with unread output count and recent human activity. Terminals opened by other sessions are not listed — each session has its own workspace and its own terminals.',
       parameters: {},
       output: {
         schema: {
@@ -339,8 +354,8 @@ export function createTools(
         },
         render: (_args, value) => [{ type: 'text', text: renderList(value, maxResultBytes) }],
       },
-      execute() {
-        const list = manager.listDetailed(5)
+      execute(_args, exec) {
+        const list = manager.listDetailed(5, agentSessionId(exec))
         // Strip cols/rows and remove undefineds so it passes schema and lossless JSON validation
         return Promise.resolve(cleanLossless(list.map(({ cols: _c, rows: _r, ...item }) => item)))
       },
@@ -503,6 +518,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const profiles = new ProfileStore(resolved.dataDir)
   const journal = new JournalStore(resolved.dataDir)
   const terminalStore = new TerminalStore(resolved.dataDir)
+  const sessionCwd = createSessionDirectory(ctx)
 
   const manager = new WorkbenchTerminalManager({
     allowlist: resolved.allowlist,
@@ -533,13 +549,15 @@ export function apply(ctx: Context, config: Config = {}): void {
       profileStore: profiles,
       journalStore: journal,
       trustedHosts: resolved.trustedHosts,
+      resolveSessionCwd: sessionCwd.resolveCwd,
+      sessionExists: sessionCwd.exists,
     })
   }
   catch (err) {
     console.warn(`[dsh-workbench] gateway registration skipped: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  for (const tool of createTools(manager, resolved, profiles, gateway)) {
+  for (const tool of createTools(manager, resolved, profiles, gateway, sessionCwd.resolveCwd)) {
     ctx.tools.register(tool)
   }
 

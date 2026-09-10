@@ -11,6 +11,8 @@ import type { Duplex } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { charsetFromContentType, extractRedirectTarget, rewriteHtml } from './proxy.ts'
+import { UnknownTerminalError } from './terminal/manager.ts'
+import type { SessionCwdResolver, SessionExistsProbe } from './session-registry.ts'
 import type { JournalStore } from './terminal/journal.ts'
 import type { WorkbenchTerminalManager } from './terminal/manager.ts'
 import type { ProfileStore } from './terminal/profiles.ts'
@@ -27,6 +29,10 @@ export interface GatewayOptions {
   profileStore: ProfileStore
   journalStore: JournalStore
   trustedHosts?: readonly string[]
+  /** Resolve a session's own workspace directory; absent in non-session hosts. */
+  resolveSessionCwd?: SessionCwdResolver
+  /** Report whether a session still exists; absent in non-session hosts. */
+  sessionExists?: SessionExistsProbe
 }
 
 const MAX_FRAME_BYTES = 64 * 1024
@@ -343,6 +349,7 @@ export class WorkbenchGateway {
         }
         case 'ensure': {
           const sessionId = frame.sessionId ?? this.socketSessions.get(ws)
+          if (sessionId) await this.adoptOrphans(sessionId)
           const current = this.options.terminalManager.collaborationViews(sessionId)
           if (current.length === 0) {
             await this.openTerminal(ws, {
@@ -359,7 +366,7 @@ export class WorkbenchGateway {
           return
         }
         case 'attach': {
-          await this.attachTerminal(ws, frame.id)
+          await this.guardTerminal(ws, frame.id, () => this.attachTerminal(ws, frame.id))
           return
         }
         case 'detach': {
@@ -368,11 +375,11 @@ export class WorkbenchGateway {
           return
         }
         case 'input': {
-          this.options.terminalManager.get(frame.id).humanWrite(String(frame.data ?? ''))
+          await this.guardTerminal(ws, frame.id, () => this.options.terminalManager.get(frame.id).humanWrite(String(frame.data ?? '')))
           return
         }
         case 'resize': {
-          this.options.terminalManager.get(frame.id).resize(Number(frame.rows), Number(frame.cols))
+          await this.guardTerminal(ws, frame.id, () => this.options.terminalManager.get(frame.id).resize(Number(frame.rows), Number(frame.cols)))
           return
         }
         case 'open': {
@@ -380,8 +387,10 @@ export class WorkbenchGateway {
           return
         }
         case 'close': {
-          const outcome = await this.options.terminalManager.close(frame.id)
+          const outcome = await this.guardTerminal(ws, frame.id, () => this.options.terminalManager.close(frame.id))
+          if (outcome === undefined) return
           this.send(ws, { channel: 'terminal', type: 'closed', id: frame.id, outcome })
+          this.broadcastTerminals()
           return
         }
         case 'profiles:save': {
@@ -463,6 +472,7 @@ export class WorkbenchGateway {
 
   private async sendHello(ws: WebSocket, sessionId?: string): Promise<void> {
     const activeSessionId = sessionId ?? this.socketSessions.get(ws)
+    if (activeSessionId) await this.adoptOrphans(activeSessionId)
     this.send(ws, {
       channel: 'workbench',
       type: 'hello',
@@ -471,6 +481,53 @@ export class WorkbenchGateway {
       browserTabs: this.listBrowserTabs(activeSessionId),
       sessionId: activeSessionId,
     })
+  }
+
+  /**
+   * Claim terminals this conversation should inherit. Under the per-session
+   * filter, a terminal is unreachable unless some live session owns it — so
+   * terminals with no owner, and terminals whose owner the session store no
+   * longer holds (a deleted conversation), are handed to the first session
+   * that connects. A store that cannot answer about a session leaves its
+   * terminals alone: unknown ownership must never be redistributed.
+   */
+  private async adoptOrphans(sessionId: string): Promise<void> {
+    const orphans: string[] = []
+    for (const view of this.options.terminalManager.collaborationViews()) {
+      if (!view.sessionId) {
+        orphans.push(view.terminalId)
+        continue
+      }
+      if (view.sessionId === sessionId) continue
+      if (!this.options.sessionExists) continue
+      if (await this.options.sessionExists(view.sessionId) === false) orphans.push(view.terminalId)
+    }
+    if (orphans.length > 0) await this.options.terminalManager.adopt(orphans, sessionId)
+  }
+
+  /**
+   * Run one per-terminal frame body, or report a dead id instead of failing the
+   * socket. A stale id is the normal aftermath of a service restart — tabs
+   * reconnect before the new process has restored their terminals — so the
+   * client is told the tab is gone and handed a fresh list, rather than left
+   * retrying an id that will never exist again.
+   * @returns the body's value, or `undefined` when the id did not resolve.
+   */
+  private async guardTerminal<T>(ws: WebSocket, id: string, use: () => Promise<T> | T): Promise<T | undefined> {
+    try {
+      return await use()
+    }
+    catch (err) {
+      if (!(err instanceof UnknownTerminalError)) throw err
+      this.send(ws, { channel: 'error', message: err.message })
+      this.send(ws, { channel: 'terminal', type: 'closed', id, outcome: 'closed' })
+      this.send(ws, {
+        channel: 'terminal',
+        type: 'terminals',
+        terminals: this.options.terminalManager.collaborationViews(this.socketSessions.get(ws)),
+      })
+      return undefined
+    }
   }
 
   private async attachTerminal(ws: WebSocket, id: string): Promise<void> {
@@ -516,12 +573,13 @@ export class WorkbenchGateway {
   private async openTerminal(ws: WebSocket, request: TerminalOpenRequest): Promise<void> {
     let base = request.profile ? await this.options.profileStore.get(request.profile) : undefined
     const kind = request.kind ?? base?.kind ?? (request.host ? 'ssh' : 'local')
+    const sessionId = request.sessionId ?? this.socketSessions.get(ws)
 
     const { snapshot, motd } = await this.options.terminalManager.open({
       kind,
       name: request.name ?? base?.name,
-      sessionId: request.sessionId ?? this.socketSessions.get(ws),
-      cwd: request.cwd ?? base?.cwd,
+      sessionId,
+      cwd: request.cwd ?? base?.cwd ?? await this.workspaceCwd(sessionId),
       host: request.host ?? base?.host,
       user: request.user ?? base?.user,
       port: request.port ?? base?.port,
@@ -532,8 +590,23 @@ export class WorkbenchGateway {
 
     const view = this.options.terminalManager.get(snapshot.terminalId).collaborationView()
     this.send(ws, { channel: 'terminal', type: 'opened', view, motd })
-    this.broadcastTerminals()
     this.broadcastSummon()
+    this.broadcastTerminals()
+  }
+
+  /**
+   * The workspace directory a conversation owns, so a terminal a human opens
+   * from that conversation lands in that session's project rather than in the
+   * directory dsh-web was launched from.
+   */
+  private async workspaceCwd(sessionId?: string): Promise<string | undefined> {
+    if (!sessionId || !this.options.resolveSessionCwd) return undefined
+    try {
+      return await this.options.resolveSessionCwd(sessionId)
+    }
+    catch {
+      return undefined
+    }
   }
 
   /** Broadcast a newly opened terminal to all connected clients and reveal the panel. */

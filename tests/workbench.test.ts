@@ -8,9 +8,10 @@ import { PROXY_ROUTE, extractRedirectTarget, rewriteHtml } from '../src/proxy.ts
 import { sanitizeTerminalText, stripAnsiSequences } from '../src/terminal/ansi.ts'
 import type { WorkbenchServerFrame } from '../src/protocol.ts'
 import { JournalStore } from '../src/terminal/journal.ts'
-import { WorkbenchTerminalManager } from '../src/terminal/manager.ts'
+import { UnknownTerminalError, WorkbenchTerminalManager } from '../src/terminal/manager.ts'
 import { ProfileStore } from '../src/terminal/profiles.ts'
 import { createSentinelLineFilter, stripSentinel } from '../src/terminal/sentinel.ts'
+import { TerminalStore } from '../src/terminal/store.ts'
 import { FakeConnection } from './fakes.ts'
 
 const tempDirs: string[] = []
@@ -128,6 +129,83 @@ describe('workbench terminal manager & tools', () => {
     expect(readResult.text).toContain('command output')
 
     await manager.closeAll()
+  })
+
+  it('keeps every session\'s terminals to itself and re-claims orphans', async () => {
+    const dir = await tempDir()
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 4,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      connectLocal: async () => new FakeConnection(),
+      terminalStore: new TerminalStore(dir),
+    })
+
+    const a = await manager.open({ kind: 'local', sessionId: 'session-a', cwd: '/tmp' })
+    const b = await manager.open({ kind: 'local', sessionId: 'session-b', cwd: '/tmp' })
+    const orphan = await manager.open({ kind: 'local', cwd: '/tmp' })
+
+    // Strict per-session scoping: a session sees its own terminals and nothing
+    // else, so two conversations never share a shell or a workspace.
+    expect(manager.list('session-a').map(t => t.terminalId)).toEqual([a.snapshot.terminalId])
+    expect(manager.list('session-b').map(t => t.terminalId)).toEqual([b.snapshot.terminalId])
+    expect(manager.list().map(t => t.terminalId).sort()).toEqual(
+      [a.snapshot.terminalId, b.snapshot.terminalId, orphan.snapshot.terminalId].sort(),
+    )
+
+    // An unattributed terminal is claimed by the first session that asks, so it
+    // stays reachable instead of being hidden behind the filter forever.
+    await manager.adopt([orphan.snapshot.terminalId], 'session-a')
+    expect(manager.list('session-a').map(t => t.terminalId).sort()).toEqual(
+      [a.snapshot.terminalId, orphan.snapshot.terminalId].sort(),
+    )
+
+    await manager.closeAll()
+  })
+
+  it('reports which ids are open when a stale id is used', async () => {
+    const dir = await tempDir()
+    const manager = new WorkbenchTerminalManager({
+      allowlist: [],
+      maxSessions: 4,
+      defaultPort: 22,
+      connectTimeoutMs: 100,
+      maxScrollbackBytes: 64 * 1024,
+      connectLocal: async () => new FakeConnection(),
+    })
+    const live = await manager.open({ kind: 'local', sessionId: 'session-a', cwd: '/tmp' })
+
+    try {
+      manager.get('wb-term-1-9')
+      expect.unreachable('a stale id must not resolve')
+    }
+    catch (err) {
+      expect(err).toBeInstanceOf(UnknownTerminalError)
+      const message = (err as Error).message
+      expect(message).toContain('wb-term-1-9')
+      // The recovery path names the ids that DO exist, so a caller can retry
+      // against a live terminal instead of the dead handle it remembered.
+      expect(message).toContain(live.snapshot.terminalId)
+    }
+
+    await manager.closeAll()
+  })
+
+  it('loses no spec when terminals are persisted concurrently', async () => {
+    const dir = await tempDir()
+    const store = new TerminalStore(dir)
+    const spec = (id: string) => ({ id, kind: 'local' as const, sessionId: 'session-a', createdAt: Date.now() })
+
+    // Three un-awaited saves in one tick: an unserialized read-modify-write
+    // would let the last writer win and silently drop the other two, and a
+    // dropped terminal never comes back after a restart.
+    await Promise.all([store.save(spec('wb-term-1-1')), store.save(spec('wb-term-1-2')), store.save(spec('wb-term-1-3'))])
+    expect((await store.list()).map(s => s.id).sort()).toEqual(['wb-term-1-1', 'wb-term-1-2', 'wb-term-1-3'])
+
+    await Promise.all([store.remove('wb-term-1-1'), store.save({ ...spec('wb-term-1-4'), name: 'kept' })])
+    expect((await store.list()).map(s => s.id).sort()).toEqual(['wb-term-1-2', 'wb-term-1-3', 'wb-term-1-4'])
   })
 })
 

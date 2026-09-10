@@ -1,6 +1,7 @@
 /**
  * Session registry: lifecycle, allowlist, and bounds for both local and SSH terminals.
- * Supports filtering by the active conversation sessionId.
+ * Terminals are owned by exactly one conversation session and listed strictly
+ * per session, so two sessions never share a workspace or a shell.
  * @module dsh-workbench/terminal/manager
  */
 
@@ -18,12 +19,12 @@ export const INITIAL_COLS = 220
 export const INITIAL_ROWS = 50
 
 /**
- * Resolve a sensible working directory for a new local terminal when the
- * caller did not specify one. We walk up from the dsh-web process's cwd
- * looking for the nearest directory that contains a project marker
- * (.git, package.json, Cargo.toml, pyproject.toml, go.mod, etc.). This way
- * running dsh web from a project's subdirectory automatically opens new
- * terminals in that project rather than in the dsh-hub checkout.
+ * Resolve a sensible working directory for a new local terminal when neither
+ * the caller nor the session header named one: walk up from the dsh-web
+ * process's cwd to the nearest directory holding a project marker (.git,
+ * package.json, Cargo.toml, pyproject.toml, go.mod, …). Sessions with a
+ * recorded workspace never reach this — their terminals inherit the
+ * conversation's own directory.
  */
 function resolveSmartCwd(): string {
   const start = process.cwd()
@@ -78,6 +79,24 @@ export interface OpenOptions {
 
 export type DetailedTerminalView = TerminalCollaborationView & { recentActivity: ActivityEntry[] }
 
+/**
+ * A referenced terminal id is not open. Carries the ids that ARE open so the
+ * caller — a model tool, or a browser tab reconnecting after a service restart
+ * — can self-correct instead of retrying a dead handle.
+ */
+export class UnknownTerminalError extends Error {
+  /**
+   * @param terminalId - the id that did not resolve.
+   * @param available - ids of every terminal currently open.
+   */
+  constructor(readonly terminalId: string, readonly available: readonly string[]) {
+    super(available.length === 0
+      ? `unknown terminal id ${JSON.stringify(terminalId)}: no workbench terminal is open — open one with workbench_terminal_open`
+      : `unknown terminal id ${JSON.stringify(terminalId)}: open terminals are ${available.map(id => JSON.stringify(id)).join(', ')} — call workbench_terminal_list to refresh the list`)
+    this.name = 'UnknownTerminalError'
+  }
+}
+
 export class WorkbenchTerminalManager {
   private readonly sessions = new Map<string, WorkbenchTerminalSession>()
   private readonly changeListeners = new Set<() => void>()
@@ -91,6 +110,7 @@ export class WorkbenchTerminalManager {
     let restored = 0
     for (const spec of specs) {
       if (this.sessions.has(spec.id)) continue
+      if (this.sessions.size >= this.options.maxSessions) break
       try {
         await this.open({
           id: spec.id,
@@ -107,10 +127,49 @@ export class WorkbenchTerminalManager {
         restored++
       }
       catch (err) {
-        console.warn(`[dsh-workbench] failed to restore terminal ${spec.id}: ${err instanceof Error ? err.message : String(err)}`)
+        // A spec whose shell cannot be respawned (deleted cwd, refused host) is
+        // dead weight: keeping it makes every boot retry it, it holds a session
+        // slot, and its id keeps haunting tool calls that still remember it.
+        console.warn(`[dsh-workbench] dropping unrestorable terminal ${spec.id}: ${err instanceof Error ? err.message : String(err)}`)
+        void this.options.terminalStore.remove(spec.id)
       }
     }
     return restored
+  }
+
+  /**
+   * Bind orphan terminals to a conversation. "Orphan" means the client-side
+   * filter would otherwise hide it forever: it never had an owner, or its
+   * owner is a conversation the session store no longer holds. Every terminal
+   * then belongs to exactly one live session, which is what lets the
+   * per-session filter stay both complete and tight.
+   * @param terminalIds - terminals to claim.
+   * @param sessionId - the session claiming them.
+   */
+  async adopt(terminalIds: readonly string[], sessionId: string): Promise<void> {
+    let claimed = 0
+    for (const id of terminalIds) {
+      const session = this.sessions.get(id)
+      if (session === undefined) continue
+      session.adoptSession(sessionId)
+      claimed++
+      const view = session.collaborationView()
+      if (this.options.terminalStore) {
+        void this.options.terminalStore.save({
+          id: view.terminalId,
+          kind: view.kind,
+          name: view.name,
+          sessionId,
+          cwd: view.cwd,
+          host: view.host,
+          user: view.user,
+          port: view.port,
+          echo: true,
+          createdAt: Date.now(),
+        })
+      }
+    }
+    if (claimed > 0) this.notifyChange()
   }
 
   async open(req: OpenOptions): Promise<{ snapshot: TerminalSnapshot; motd: string }> {
@@ -207,15 +266,29 @@ export class WorkbenchTerminalManager {
 
   get(terminalId: string): WorkbenchTerminalSession {
     const session = this.sessions.get(terminalId)
-    if (session === undefined) throw new Error(`unknown terminal id ${JSON.stringify(terminalId)}`)
+    if (session === undefined) throw new UnknownTerminalError(terminalId, [...this.sessions.keys()])
     return session
   }
 
+  has(terminalId: string): boolean {
+    return this.sessions.has(terminalId)
+  }
+
+  /** Ids of every open terminal, for error messages and diagnostics. */
+  ids(): string[] {
+    return [...this.sessions.keys()]
+  }
+
+  /**
+   * Terminals of one conversation. A scoped call returns ONLY that session's
+   * own terminals — unscoped terminals are adopted at connect time
+   * ({@link adoptUnscoped}), so nothing is hidden and nothing leaks into other
+   * conversations the way the old "unscoped matches everything" rule did.
+   */
   list(sessionId?: string): TerminalSnapshot[] {
     let list = [...this.sessions.values()].map(s => s.snapshot())
     if (sessionId) {
-      // If scoped, match exact sessionId or unassociated sessions
-      list = list.filter(s => !s.sessionId || s.sessionId === sessionId)
+      list = list.filter(s => s.sessionId === sessionId)
     }
     return list
   }
@@ -223,7 +296,7 @@ export class WorkbenchTerminalManager {
   collaborationViews(sessionId?: string): TerminalCollaborationView[] {
     let list = [...this.sessions.values()].map(s => s.collaborationView())
     if (sessionId) {
-      list = list.filter(s => !s.sessionId || s.sessionId === sessionId)
+      list = list.filter(s => s.sessionId === sessionId)
     }
     return list
   }
@@ -231,7 +304,7 @@ export class WorkbenchTerminalManager {
   listDetailed(activityLimit: number, sessionId?: string): DetailedTerminalView[] {
     let list = [...this.sessions.values()]
     if (sessionId) {
-      list = list.filter(s => !s.snapshot().sessionId || s.snapshot().sessionId === sessionId)
+      list = list.filter(s => s.snapshot().sessionId === sessionId)
     }
     return list.map(s => ({
       ...s.collaborationView(),

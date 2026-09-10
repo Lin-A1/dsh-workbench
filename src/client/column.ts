@@ -120,7 +120,9 @@ export function toggleSidebarColumn(): boolean {
 
 export function toggleMaximize(): boolean {
   if (typeof document === 'undefined') return false
-  return document.body.classList.toggle(MAXIMIZED_CLASS)
+  const maximized = document.body.classList.toggle(MAXIMIZED_CLASS)
+  notifyResize()
+  return maximized
 }
 
 export function setCustomWidth(px: number): void {
@@ -128,6 +130,18 @@ export function setCustomWidth(px: number): void {
   const clamped = clampWidth(px)
   localStorage.setItem(STORAGE_KEY_WIDTH, String(clamped))
   setWidthVar(clamped)
+}
+
+/**
+ * Tell mounted surfaces to re-measure themselves. The xterm viewports already
+ * watch their own box with a ResizeObserver, but a drag ends with a settle
+ * frame the observer can miss, and React re-renders driven by the resize are
+ * not ordered against the grid change — so the panel also announces the event
+ * directly and every viewport re-fits on it.
+ */
+export function notifyResize(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event('wb-resize'))
 }
 
 /**
@@ -149,6 +163,9 @@ export function initResizeHandle(handle: HTMLElement): () => void {
     raf = requestAnimationFrame(() => {
       raf = null
       setWidthVar(width)
+      // Same frame as the width write, so the terminal re-fits at the cadence
+      // of the pointer instead of one render behind it.
+      notifyResize()
     })
   }
   const onWindowPointerMove = (e: PointerEvent): void => {
@@ -168,6 +185,7 @@ export function initResizeHandle(handle: HTMLElement): () => void {
     window.removeEventListener('pointermove', onWindowPointerMove)
     window.removeEventListener('pointerup', endDrag)
     window.removeEventListener('pointercancel', endDrag)
+    notifyResize()
   }
   const onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || isSidebarMaximized()) return
@@ -183,6 +201,7 @@ export function initResizeHandle(handle: HTMLElement): () => void {
   const onDoubleClick = (): void => {
     localStorage.removeItem(STORAGE_KEY_WIDTH)
     setWidthVar(getEffectiveWidth())
+    notifyResize()
   }
 
   handle.addEventListener('pointerdown', onPointerDown)

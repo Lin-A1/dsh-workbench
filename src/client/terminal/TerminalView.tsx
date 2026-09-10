@@ -20,6 +20,10 @@ interface TermHandle {
   term: Terminal
   fit: FitAddon
   observer: ResizeObserver
+  /** Re-measure the host and, when the grid changed, tell the shell its size. */
+  applyFit: (force?: boolean) => void
+  /** Detachable `wb-resize` listener (the panel broadcasts its own width edits). */
+  onExternalResize: () => void
 }
 
 export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalViewProps): JSX.Element {
@@ -28,6 +32,11 @@ export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalView
   const [busy, setBusy] = useState(Boolean(isBusy))
   const [flashLock, setFlashLock] = useState(false)
   const busyRef = useRef(Boolean(isBusy))
+  // The callback identity must not re-run the frame subscription: every
+  // re-subscribe opens a window in which frames are dropped, and a dropped
+  // `attached` frame is a terminal that stays blank.
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
   useEffect(() => {
     busyRef.current = Boolean(isBusy || busy)
@@ -75,7 +84,7 @@ export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalView
 
     const disposeErrors = workbenchClient.onFrame((frame) => {
       if (frame.channel === 'error') {
-        onError?.(frame.message)
+        onErrorRef.current?.(frame.message)
       }
     })
 
@@ -83,7 +92,7 @@ export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalView
       dispose()
       disposeErrors()
     }
-  }, [activeTerminalId, onError])
+  }, [activeTerminalId])
 
   // Mount/update xterm viewport
   useEffect(() => {
@@ -143,33 +152,49 @@ export function TerminalView({ activeTerminalId, isBusy, onError }: TerminalView
         workbenchClient.send({ channel: 'terminal', type: 'input', id: activeTerminalId, data })
       })
 
-      const observer = new ResizeObserver(() => {
-        try { fit.fit() } catch { /* ignore */ }
+      // Fit synchronously whenever the box changes, and only emit a resize
+      // frame when the grid actually changed so a drag does not flood the
+      // socket. This must NOT be deferred to requestAnimationFrame: xterm
+      // itself paints through rAF, and a throttled or unfocused tab never runs
+      // those callbacks — deferring the fit left the terminal frozen at a stale
+      // size (a 1-column screen) after a split-width drag.
+      let lastBox = ''
+      const applyFit = (force = false): void => {
+        const box = `${host.clientWidth}x${host.clientHeight}`
+        if (!force && box === lastBox) return
+        lastBox = box
+        const before = `${term.rows}x${term.cols}`
+        try {
+          fit.fit()
+        }
+        catch {
+          return
+        }
         const { rows, cols } = term
-        if (rows > 1 && cols > 1) {
+        if (rows > 1 && cols > 1 && `${rows}x${cols}` !== before) {
           workbenchClient.send({ channel: 'terminal', type: 'resize', id: activeTerminalId, rows, cols })
         }
-      })
+      }
+
+      const observer = new ResizeObserver(() => applyFit())
       observer.observe(host)
-      handle = { term, fit, observer }
+      const onExternalResize = (): void => applyFit()
+      window.addEventListener('wb-resize', onExternalResize)
+      handle = { term, fit, observer, applyFit, onExternalResize }
       terms.current.set(activeTerminalId, handle)
     }
 
     host.appendChild(handle.term.element ?? document.createElement('div'))
-    try {
-      handle.fit.fit()
-      requestAnimationFrame(() => { try { handle.fit.fit() } catch { /* ignore */ } })
-      if (typeof document !== 'undefined' && 'fonts' in document) {
-        void document.fonts.ready.then(() => { try { handle.fit.fit() } catch { /* ignore */ } })
-      }
-      handle.term.focus()
+    handle.applyFit(true)
+    if (typeof document !== 'undefined' && 'fonts' in document) {
+      // A late webfont changes the cell metrics, so re-fit once it lands.
+      void document.fonts.ready.then(() => handle?.applyFit(true))
     }
-    catch {
-      /* ignore */
-    }
+    handle.term.focus()
     workbenchClient.send({ channel: 'terminal', type: 'attach', id: activeTerminalId })
 
     return () => {
+      if (handle) window.removeEventListener('wb-resize', handle.onExternalResize)
       handle?.term.element?.remove()
     }
   }, [activeTerminalId])

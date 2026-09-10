@@ -98,7 +98,7 @@ body.wb-sidebar-opened [data-side='details'] {
   height: 100%;
   min-height: 0;
   position: relative;
-  padding: 10px 12px 10px 8px;
+  padding: 10px 12px 10px 16px;
   box-sizing: border-box;
   background: var(--wb-page);
   color: var(--wb-text-2);
@@ -148,12 +148,16 @@ body.wb-sidebar-opened .wb-sidebar-root {
   border-radius: 4px;
 }
 
-/* ---- Split drag handle (generous 28px hitbox straddling column edge) ----*/
+/* ---- Split drag handle ---------------------------------------------------
+   The details column clips everything outside itself, so a hit strip that
+   straddled the border (left: -20px) was only ~8px wide in practice — the
+   rest was clipped away. The strip now lives entirely inside the panel's left
+   gutter, so the whole 20px is grabbable. ---------------------------------- */
 .wb-resize-handle {
   position: absolute;
   top: 0;
-  left: -20px;
-  width: 28px;
+  left: 0;
+  width: 20px;
   height: 100%;
   cursor: col-resize;
   z-index: 60;
@@ -165,8 +169,8 @@ body.wb-sidebar-opened .wb-sidebar-root {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 13px;
-  width: 2px;
+  left: 15px;
+  width: 1px;
   background: transparent;
   transition: background 0.15s ease;
 }
@@ -176,14 +180,14 @@ body.wb-sidebar-opened .wb-sidebar-root {
   content: '';
   position: absolute;
   top: 50%;
-  left: 11px;
-  width: 6px;
+  left: 5px;
+  width: 5px;
   height: 56px;
   transform: translateY(-50%);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.18);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  opacity: 0.38;
+  opacity: 0.42;
   transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 .wb-sidebar-root:hover .wb-resize-handle::after {
@@ -261,12 +265,26 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
 }
 .wb-unified-tabstrip::-webkit-scrollbar { display: none; }
 
-.wb-unified-tab {
+/* A tab is a shell (owns the pill background) holding two ordinary sibling
+   buttons: one selects, one closes. Nesting the close control inside the tab
+   button was invalid interactive content and made the hit targets unreliable. */
+.wb-tab-shell {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 27px;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+}
+.wb-tab-shell:hover { background: var(--wb-hover); }
+.wb-tab-shell.active { background: var(--wb-active); }
+
+.wb-tab-main {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 27px;
-  padding: 0 9px;
+  padding: 0 4px 0 9px;
   background: transparent;
   border: none;
   border-radius: 6px;
@@ -276,18 +294,11 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease, color 0.12s ease;
-  flex: none;
+  transition: color 0.12s ease;
 }
-.wb-unified-tab:hover {
-  background: var(--wb-hover);
-  color: var(--wb-text-2);
-}
-.wb-unified-tab.active {
-  background: var(--wb-active);
-  color: var(--wb-text-1);
-}
-.wb-tab-icon { flex: none; opacity: 0.9; }
+.wb-tab-shell:hover .wb-tab-main { color: var(--wb-text-2); }
+.wb-tab-shell.active .wb-tab-main { color: var(--wb-text-1); }
+.wb-tab-icon { flex: none; opacity: 0.9; display: inline-flex; }
 
 .wb-tab-label {
   max-width: 140px;
@@ -306,7 +317,7 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   line-height: 15px;
   font-variant-numeric: tabular-nums;
 }
-.wb-unified-tab.active .wb-tab-count { color: var(--wb-text-2); background: rgba(255, 255, 255, 0.09); }
+.wb-tab-shell.active .wb-tab-count { color: var(--wb-text-2); background: rgba(255, 255, 255, 0.09); }
 
 .wb-unread-dot {
   width: 5px;
@@ -324,22 +335,27 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   justify-content: center;
   width: 16px;
   height: 16px;
+  margin-right: 3px;
+  padding: 0;
+  border: none;
   border-radius: 4px;
+  background: transparent;
   color: var(--wb-text-3);
+  cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
-.wb-unified-tab.active .wb-tab-close-btn { opacity: 0.7; }
-.wb-unified-tab:hover .wb-tab-close-btn { opacity: 0.7; }
+.wb-tab-shell.active .wb-tab-close-btn { opacity: 0.7; }
+.wb-tab-shell:hover .wb-tab-close-btn { opacity: 0.7; }
 .wb-tab-close-btn:hover {
-  opacity: 1 !important;
+  opacity: 1;
   background: rgba(239, 111, 97, 0.16);
   color: var(--wb-red);
 }
 
-/* ---- New-tab button + floating menu -------------------------------------*/
-.wb-plus-wrapper { position: relative; display: inline-flex; flex: none; }
-
+/* ---- New-tab button + popover -------------------------------------------
+   The menu anchors to the panel root (not the header): the header strip
+   scrolls and the card clips, so a dropdown parented there never appeared. */
 .wb-plus-btn {
   display: inline-flex;
   align-items: center;
@@ -354,20 +370,18 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   transition: background 0.12s ease, color 0.12s ease;
 }
 .wb-plus-btn:hover, .wb-plus-btn.active {
-  background: var(--wb-hover);
+  background: var(--wb-active);
   color: var(--wb-text-1);
 }
 
 .wb-plus-menu {
   position: absolute;
-  top: 32px;
-  left: 0;
   z-index: 100;
-  min-width: 200px;
-  background: #1d222b;
+  min-width: 214px;
+  background: var(--wb-card);
   border: 1px solid var(--wb-line-strong);
   border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -476,6 +490,69 @@ body.wb-resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
   position: relative;
   background: var(--wb-inset);
+}
+
+/* Empty stage: what the body shows before any tab exists. An explicit pair of
+   actions here means "nothing happened" can never be the response to opening
+   the panel on a fresh session. */
+.wb-empty-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 24px;
+  text-align: center;
+}
+.wb-empty-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: var(--wb-active);
+  border: 1px solid var(--wb-line-strong);
+  color: var(--wb-text-2);
+}
+.wb-empty-stage .wb-hint {
+  font-size: 12px;
+  color: var(--wb-text-3);
+  margin: 0 0 18px 0;
+  line-height: 1.7;
+  max-width: 280px;
+}
+.wb-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wb-empty-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  background: var(--wb-hover);
+  border: 1px solid var(--wb-line-strong);
+  border-radius: 7px;
+  color: var(--wb-text-2);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.wb-empty-btn:hover {
+  background: var(--wb-active);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--wb-text-1);
+}
+.wb-empty-btn.primary {
+  color: var(--wb-text-1);
+  background: var(--wb-active);
 }
 
 /* Terminal: pure full-height viewport */

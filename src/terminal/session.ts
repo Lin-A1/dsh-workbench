@@ -445,6 +445,16 @@ export class WorkbenchTerminalSession {
     return { terminalId: this.id, ...this.meta, status: this.status }
   }
 
+  /**
+   * Bind this terminal to a conversation session. Used to claim terminals that
+   * predate session attribution, so the strict per-session filter neither hides
+   * them nor leaks them into every other conversation.
+   * @param sessionId - the session taking ownership.
+   */
+  adoptSession(sessionId: string): void {
+    this.meta.sessionId = sessionId
+  }
+
   collaborationView(): TerminalCollaborationView {
     return {
       ...this.snapshot(),

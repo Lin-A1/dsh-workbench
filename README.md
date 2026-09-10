@@ -21,6 +21,13 @@ dsh-workbench 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-har
 - **输入归属审计**：每次键入都记录来源（`human` / `model`），`[AI]$` 标记线标识 AI 输入，`recentActivity` 提供最近操作时间线 —— 谁做了什么，可回溯。
 - **多标签 + SSH**：本地 Shell 与远程 SSH 会话并列多开，连接配置可存为 Profile 复用。
 
+### 🗂️ 会话级工作区隔离
+
+- **一个会话，一个工作区**：新终端的默认 cwd 取自会话自身记录的目录（会话 header 的 `cwd`），而不是 dsh-web 的启动目录 —— 在 DeskAware 会话里开终端就落在 `D:\work\code\DeskAware`；会话没有记录时才回退到「向上寻找最近项目根」的启发式。
+- **终端严格按会话归属**：`workbench_terminal_list` 与侧栏只显示当前会话的终端，两个会话之间不串台、不共享 Shell。孤儿终端（会话已被删除，或历史上没记归属）由第一个连接的会话「收养」，不会永久隐身。
+- **失效 id 不再制造谜题**：引用已关闭、或属于上一个服务进程的 terminalId 时，错误信息直接列出当前可用 id，前端自动丢弃死标签并重新同步列表。
+- **重启不丢终端**：终端规格持久化写入采用串行化的读改写，多个终端同一瞬间开启也不会互相覆盖（`~/.dsh-workbench/active_terminals.json`）。
+
 ### 🔒 AI 执行保护锁（并发不撞车）
 
 AI 命令在途时（`busy`），网关在**服务端**拦截人类的普通击键 —— 键入不会混入命令流打乱 AI 的完成哨兵；`Ctrl+C` 始终放行，人类保有最高中断权。前端以琥珀色脉冲横幅提示「按键保护已生效」，标签页与状态栏同步显示 **AI 执行中**。
@@ -80,7 +87,7 @@ AI 打开终端 / 网页标签（或调用 `workbench_show`）时，面板会在
 | `workbench_terminal_open` | 打开本地（绑定会话 cwd）或 SSH 终端，返回 terminalId 与 banner |
 | `workbench_terminal_send` | 下发命令；`submit=true` 经哨兵协议等待完成并返回真实 exitCode |
 | `workbench_terminal_read` | 分页读取熟化后的保留输出与最近人类/AI 活动记录 |
-| `workbench_terminal_list` | 终端快照：未读字节、`busy` 同步位、最近活动 |
+| `workbench_terminal_list` | 当前会话的终端快照：未读字节、`busy` 同步位、最近活动 |
 | `workbench_terminal_close` | 关闭终端会话与底层进程 |
 | `workbench_browser_open` | 在共享浏览器中打开页面（外网自动走阅读代理），面板自动召唤给人类 |
 | `workbench_browser_list` / `workbench_browser_close` | 列出 / 关闭共享浏览器标签 |
