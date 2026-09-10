@@ -111,6 +111,21 @@ body:not([data-ds-dark-theme]) {
   border-radius: 4px;
 }
 
+/* ---- Header: the tab strip, then the one control that makes things -------
+   This rule went missing in a cleanup, which left the header as a plain block:
+   the strip and the control stacked into two full-width rows instead of
+   sitting side by side, and that is what made the panel look broken. */
+.wb-sidebar-header {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  min-height: 40px;
+  flex: none;
+  gap: 6px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--wb-line);
+}
+
 .wb-unified-tabstrip {
   display: flex;
   align-items: center;
@@ -120,10 +135,6 @@ body:not([data-ds-dark-theme]) {
   overflow-x: auto;
   scrollbar-width: none;
   padding: 6px 0;
-  /* Fade-out masks on both edges when tabs overflow horizontally, so
-     cut-off labels dissolve instead of ending in a hard clipped line. */
-  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
-  mask-repeat: no-repeat;
 }
 .wb-unified-tabstrip::-webkit-scrollbar { display: none; }
 
