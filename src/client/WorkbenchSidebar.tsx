@@ -297,12 +297,14 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
     if (button && root) {
       const b = button.getBoundingClientRect()
       const r = root.getBoundingClientRect()
-      // Right-align with the panel's inner edge rather than the button: the
-      // window actions are the last row of the header, so the menu then sits
-      // flush under them and can never overflow the column.
-      const wanted = r.width - PLUS_MENU_WIDTH - 8
+      // Anchor to the control that opened it, clamped inside the panel. This
+      // used to right-align to the panel's own edge, which worked while the
+      // control sat at that end of the row; now that it follows the last view,
+      // an edge-aligned menu opens a hand's width away and reads as belonging
+      // to nothing.
+      const wanted = b.left - r.left
       setPlusMenuAt({
-        left: Math.max(8, Math.min(wanted, r.width - 40)),
+        left: Math.max(8, Math.min(wanted, Math.max(8, r.width - PLUS_MENU_WIDTH - 8))),
         top: b.bottom - r.top + 6,
       })
     }
