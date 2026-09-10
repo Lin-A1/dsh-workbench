@@ -20,8 +20,6 @@ export class WorkbenchClient {
   private stopped = false
   private connected = false
   private currentSessionId: string | undefined
-  /** Cached workspace cwd (injected by the harness into the client entry). */
-  public workspaceCwd: string | undefined
   private pending: WorkbenchClientFrame[] = []
 
   setSessionId(sessionId?: string): void {
@@ -31,16 +29,6 @@ export class WorkbenchClient {
         this.ws.send(JSON.stringify({ channel: 'workbench', type: 'hello', sessionId } satisfies WorkbenchClientFrame))
       }
     }
-  }
-
-  /**
-   * Track the working directory of the active harness session. Sent to the
-   * workbench sidebar so new local terminals default to the project the
-   * human is actually working on, not the server's process.cwd() (which is
-   * whatever directory the dsh-web process was launched from).
-   */
-  setWorkspaceCwd(cwd: string | undefined): void {
-    this.workspaceCwd = cwd && cwd.length > 0 ? cwd : undefined
   }
 
   start(): void {

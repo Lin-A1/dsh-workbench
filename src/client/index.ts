@@ -11,7 +11,7 @@ import { HeaderToggleAction } from './HeaderToggleAction.tsx'
 import { workbenchClient } from './ws.ts'
 import { WorkbenchSidebar } from './WorkbenchSidebar.tsx'
 
-export const inject = ['slots', 'layout', 'cwd?']
+export const inject = ['slots', 'layout']
 
 /* ----------------------------------------------------------------------------
  * Design system
@@ -1037,20 +1037,11 @@ interface LayoutService {
 interface ClientContext {
   slots: SlotsService
   layout?: LayoutService
-  /**
-   * Working directory of the active harness session. The harness injects this
-   * through the client apply() entry so new terminals default to opening in
-   * the project the user is actually working on, rather than the server's
-   * process.cwd() (which is whatever directory the dsh-web process was
-   * launched from — typically the dsh-hub checkout).
-   */
-  cwd?: string
 }
 
 export function apply(ctx: ClientContext): void {
   injectStyle()
   workbenchClient.start()
-  workbenchClient.setWorkspaceCwd(ctx.cwd)
   setLayoutFace(ctx.layout)
   installAdoption()
   installGlobalShortcuts()
@@ -1118,6 +1109,5 @@ function SidebarWrapper(props: { closeDetails?: () => void; sessionId?: string }
   return createElement(WorkbenchSidebar, {
     sessionId: props.sessionId,
     closeDetails: props.closeDetails,
-    cwd: (workbenchClient as unknown as { workspaceCwd?: string }).workspaceCwd,
   })
 }
