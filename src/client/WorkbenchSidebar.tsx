@@ -490,16 +490,14 @@ export function WorkbenchSidebar({ sessionId }: WorkbenchSidebarProps): JSX.Elem
           {stageEmpty ? (
             <div className="wb-empty-stage">
               <span className="wb-empty-mark"><TerminalIcon size={20} /></span>
-              <p className="wb-empty-title">这个会话还没有终端</p>
-              <p className="wb-hint">终端、网页预览都开在这里；AI 也可以替你打开并实时共用。</p>
-              <div className="wb-empty-actions">
-                <button type="button" className="wb-empty-btn primary" onClick={handleCreateTerminal}>
-                  <TerminalIcon size={12} />新建终端
-                </button>
-                <button type="button" className="wb-empty-btn" onClick={handleCreateBrowser}>
-                  <GlobeIcon size={12} />新建网页
-                </button>
-              </div>
+              <p className="wb-empty-title">这个会话还没有打开的终端或网页</p>
+              {/* No buttons here on purpose: a second pair of "new" controls
+                  two rows under the real one was the third place to make
+                  something. The empty state points at that control instead. */}
+              <p className="wb-hint">
+                终端、网页预览、Git 与协同动态都开在这块面板里，AI 也可以替你打开并实时共用。
+                用上方的「网页」一键开浏览器，或「＋」新建终端。
+              </p>
             </div>
           ) : null}
         </div>

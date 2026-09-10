@@ -395,36 +395,6 @@ body:not([data-ds-dark-theme]) {
   line-height: 1.7;
   max-width: 280px;
 }
-.wb-empty-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.wb-empty-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 12px;
-  background: var(--wb-hover);
-  border: 1px solid var(--wb-line-strong);
-  border-radius: 7px;
-  color: var(--wb-text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-.wb-empty-btn:hover {
-  background: var(--wb-active);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: var(--wb-text-1);
-}
-.wb-empty-btn.primary {
-  color: var(--wb-text-1);
-  background: var(--wb-active);
-}
-
 /* Terminal: pure full-height viewport */
 .wb-term-pure-viewport {
   flex: 1;
